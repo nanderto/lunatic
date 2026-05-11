@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lunatic Platform Plan — Overview</title>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#161922',
+    primaryColor: '#1c2030',
+    primaryBorderColor: '#2a3045',
+    primaryTextColor: '#e6e8ee',
+    lineColor: '#7c9cff',
+    secondaryColor: '#11141c',
+    tertiaryColor: '#1c2030',
+    fontFamily: 'ui-monospace, Consolas, monospace'
+  }
+});
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="nav">
+    <div class="brand">Lunatic Platform</div>
+    <div class="tagline">Planning &amp; architecture docs</div>
+
+    <h4>Overview</h4>
+    <a href="index.html" class="active">Platform vision</a>
+
+    <h4>Build paths</h4>
+    <a href="substrate-apps.html">Apps on the substrate</a>
+    <a href="orleans-framework.html">Apps via a framework</a>
+
+    <h4>Roadmap</h4>
+    <a href="erlang-substrate.html">Substrate roadmap</a>
+
+    <h4>Reference</h4>
+    <a href="../CLAUDE.md">CLAUDE.md</a>
+    <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a>
+    <a href="../README.md">README.md</a>
+  </aside>
+
+  <main>
+    <h1>
+      <span class="eyebrow">Platform plan</span>
+      A BEAM-style substrate on WebAssembly
+    </h1>
+    <p class="lede">
+      Lunatic is a runtime of cheap, isolated, preemptively scheduled WASM processes with mailboxes,
+      links, and distribution. This plan completes that substrate as a programming target in its own
+      right, and describes the first framework — Orleans-style virtual actors — that will be built on
+      top of it as a separate Rust crate.
+    </p>
+
+    <h2>The layered model</h2>
+
+    <div class="mermaid">
+flowchart TB
+  subgraph APPS["Applications"]
+    direction LR
+    A1["Substrate-direct app"]
+    A2["Framework-using app"]
+    A3["Mixed app"]
+  end
+  subgraph FW["Frameworks (guest-side crates)"]
+    direction LR
+    F1["Virtual actors<br/><small>(Orleans-style)<br/>● planned</small>"]
+    F2["Durable<br/>workflows"]
+    F3["Event sourcing<br/>/ CQRS"]
+    F4["Web + channels<br/>(Phoenix-style)"]
+    F5["Streaming<br/>pipelines"]
+    F6["Job queues<br/>+ schedules"]
+  end
+  subgraph LIB["Behaviours &amp; libraries (guest-side)"]
+    direction LR
+    B1[Supervisors]
+    B2[GenServer-style]
+    B3[Process groups]
+    B4[PubSub]
+  end
+  subgraph SUB["BEAM-style substrate (host crates)"]
+    direction LR
+    S1["Processes<br/>links / monitors"]
+    S2["Mailboxes<br/>selective receive"]
+    S3["Distribution<br/>membership events"]
+    S4["Persistence<br/>providers"]
+    S5["Durable timers"]
+    S6["Networking<br/>HTTP / TLS"]
+  end
+  subgraph WT["wasmtime + WASI Preview 2"]
+    W1[Sandboxed WASM modules]
+  end
+
+  A1 --> LIB
+  A2 --> FW
+  A3 --> FW
+  A3 --> LIB
+  FW --> LIB
+  LIB --> SUB
+  SUB --> WT
+
+  style APPS fill:#1c2030,stroke:#5fd49f
+  style FW fill:#1c2030,stroke:#b988ff
+  style LIB fill:#1c2030,stroke:#7c9cff
+  style SUB fill:#1c2030,stroke:#ffc857
+  style WT fill:#11141c,stroke:#2a3045
+  style F1 fill:#2a1f3a,stroke:#b988ff,stroke-width:2px
+  style F2 fill:#11141c,stroke:#3a3550,color:#9aa3b8
+  style F3 fill:#11141c,stroke:#3a3550,color:#9aa3b8
+  style F4 fill:#11141c,stroke:#3a3550,color:#9aa3b8
+  style F5 fill:#11141c,stroke:#3a3550,color:#9aa3b8
+  style F6 fill:#11141c,stroke:#3a3550,color:#9aa3b8
+    </div>
+
+    <h2>Build paths</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Apps on the substrate</h3>
+        <p>
+          Build directly against processes, mailboxes, links, monitors, supervisors, and process groups.
+          The patterns and roadmap milestones for this path are in
+          <a href="substrate-apps.html">Apps on the substrate</a>.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Apps via a framework</h3>
+        <p>
+          The first framework planned is Orleans-style virtual actors, packaged as a guest-side Rust
+          crate. Detailed phase plan in <a href="orleans-framework.html">Apps via a framework</a>.
+        </p>
+      </div>
+    </div>
+    <h2>Frameworks</h2>
+    <p>
+      Virtual actors is the framework currently scoped. The others below are placeholders — patterns
+      the same substrate accommodates, kept here as candidates for future planning. They are not on
+      the roadmap and have no detailed design yet.
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3>Virtual actors</h3>
+        <p>
+          Orleans-style grains with stable identity, on-demand activation, single-activation guarantee,
+          and persistent state.
+        </p>
+        <div class="meta"><span class="tag info">Planned</span> · <a href="orleans-framework.html">Full plan</a></div>
+      </div>
+      <div class="card">
+        <h3>Durable workflows</h3>
+        <p>
+          Temporal / Cadence shape: workflows as processes whose mailbox history is the event log,
+          activities as messages with retries.
+        </p>
+        <div class="meta"><span class="tag warn">Placeholder</span></div>
+      </div>
+      <div class="card">
+        <h3>Event sourcing &amp; CQRS</h3>
+        <p>
+          Aggregates as processes, event store as separate processes, projections via process groups.
+        </p>
+        <div class="meta"><span class="tag warn">Placeholder</span></div>
+      </div>
+      <div class="card">
+        <h3>Web + channels</h3>
+        <p>
+          Phoenix-style: request handlers as short-lived processes, channels as long-lived processes,
+          pubsub via process groups, presence via CRDTs.
+        </p>
+        <div class="meta"><span class="tag warn">Placeholder</span></div>
+      </div>
+      <div class="card">
+        <h3>Streaming pipelines</h3>
+        <p>
+          GenStage / Broadway-style back-pressured producer / consumer / dispatcher topologies as a
+          reusable framework.
+        </p>
+        <div class="meta"><span class="tag warn">Placeholder</span></div>
+      </div>
+      <div class="card">
+        <h3>Job queues &amp; schedules</h3>
+        <p>
+          Oban-style durable job queues with retries, rate limits, and cron triggers.
+        </p>
+        <div class="meta"><span class="tag warn">Placeholder</span></div>
+      </div>
+    </div>
+
+    <h2>Where the runtime is today</h2>
+    <p>
+      The current runtime supports single-node Rust services with crash-isolated workers, TCP/UDP
+      networking, embedded SQLite, and a coordinator-style distributed mode. Several primitives that
+      a BEAM-equivalent runtime would normally provide are absent or partial.
+    </p>
+    <table>
+      <thead>
+        <tr><th>Capability</th><th>Today</th><th>Target</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>wasmtime</td><td><span class="tag bad">v8 (years old)</span></td><td>Current + WASI Preview 2</td></tr>
+        <tr><td>Outbound HTTP / TLS</td><td><span class="tag bad">Guest-side only</span></td><td>Host capability via wasi-http</td></tr>
+        <tr><td>Monitors with refs</td><td><span class="tag bad">Missing</span></td><td>One-way liveness with DOWN messages</td></tr>
+        <tr><td>Node-monitor events</td><td><span class="tag bad">Poll-only</span></td><td>Push events to guest processes</td></tr>
+        <tr><td>Supervision behaviour</td><td><span class="tag warn">Primitive only</span></td><td>Blessed crate with restart strategies</td></tr>
+        <tr><td>Process groups / pubsub</td><td><span class="tag bad">Missing</span></td><td>pg-style group registry</td></tr>
+        <tr><td>Durable timers</td><td><span class="tag bad">In-memory only</span></td><td>Survive activation / silo restarts</td></tr>
+        <tr><td>Persistence provider abstraction</td><td><span class="tag bad">Missing</span></td><td>SQLite + pluggable backends</td></tr>
+        <tr><td>Local processes &amp; mailboxes</td><td><span class="tag good">Solid</span></td><td>—</td></tr>
+        <tr><td>Distribution transport</td><td><span class="tag good">Solid</span></td><td>—</td></tr>
+        <tr><td>Per-process resource limits</td><td><span class="tag good">Solid</span></td><td>—</td></tr>
+      </tbody>
+    </table>
+    <p>The full roadmap to close these gaps is in <a href="erlang-substrate.html">Substrate roadmap</a>.</p>
+
+    <h2>Sequence of work</h2>
+
+    <div class="mermaid">
+gantt
+  title Platform roadmap
+  dateFormat  YYYY-MM-DD
+  axisFormat  %b
+  section Substrate
+  Wasmtime + WASI Preview 2     :a1, 2026-01-01, 60d
+  Outbound HTTP / TLS host caps :a2, after a1, 30d
+  Monitors + node-monitor events:a3, after a1, 20d
+  Process groups / pubsub       :a4, after a3, 20d
+  Supervision behaviour crate   :a5, after a3, 25d
+  Persistence provider trait    :a6, after a2, 25d
+  Durable timers (reminders)    :a7, after a6, 20d
+  section Substrate-direct apps
+  Production-ready milestone    :c1, after a5, 1d
+  section Virtual actors framework
+  Phase 0–1 (single node)       :b1, after a5, 35d
+  Phase 2–3 (distributed)       :b2, after b1, 50d
+  Phase 4–5 (reminders, streams):b3, after b2, 40d
+    </div>
+
+    <p>
+      Substrate items are largely independent except where shown. Substrate-direct applications become
+      production-ready at the end of phase 5 (supervision crate). The virtual-actor framework depends on
+      substrate completion through phase 5; later framework phases pick up additional substrate items as
+      they land.
+    </p>
+
+    <h2 id="definition-of-done">Definition of done</h2>
+    <p>
+      Every addition of functionality — substrate primitive, host capability, behaviour crate, framework
+      phase — is complete only when all of the following hold. This applies per increment, not only at
+      phase boundaries.
+    </p>
+    <table>
+      <thead><tr><th>Gate</th><th>Requirement</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Tests cover new code</td>
+          <td>
+            New code carries tests at the appropriate level: unit tests for libraries, integration
+            tests for host-function changes (against a guest module exercising the call), end-to-end
+            tests for framework features. Coverage is qualitative — every behaviour change has at
+            least one test demonstrating it.
+          </td>
+        </tr>
+        <tr>
+          <td>Full suite passes</td>
+          <td>
+            <code>cargo test</code> across the workspace passes, including all pre-existing tests.
+            Per-crate tests pass for any crate touched. Bench builds are not broken
+            (<code>cargo build --benches</code>).
+          </td>
+        </tr>
+        <tr>
+          <td>Lint passes</td>
+          <td>
+            <code>cargo fmt --check</code> and <code>cargo clippy --workspace --all-targets</code>
+            both pass with no new warnings.
+          </td>
+        </tr>
+        <tr>
+          <td>Host-function surface is asserted</td>
+          <td>
+            Any host-function addition, removal, or rename updates
+            <code>wat/all_imports.wat</code>; the import-signature test passes.
+          </td>
+        </tr>
+        <tr>
+          <td>Documentation reflects reality</td>
+          <td>
+            The relevant page in <code>/docs</code> is updated as part of the same change — the
+            substrate roadmap when a substrate primitive lands, the Orleans plan when a framework
+            phase lands, the patterns guide when a new pattern becomes idiomatic, the gap table on
+            this page when a row's status changes.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <strong>Scope rule.</strong> Phase-level "definition of done" sections on the roadmap pages
+      describe what each phase produces. The gates above describe what every individual change within
+      a phase must satisfy before it merges. Both apply.
+    </div>
+
+    <h2>Out of scope</h2>
+    <ul>
+      <li>
+        <strong>Hot code loading.</strong> Replaced by module versioning and rolling deploys.
+      </li>
+      <li>
+        <strong>ETS / Mnesia equivalents.</strong> Persistence is via storage providers; no in-runtime
+        distributed term store.
+      </li>
+      <li>
+        <strong>Ports / NIFs.</strong> WASM sandbox is the deliberate replacement for in-process native
+        extensions.
+      </li>
+      <li>
+        <strong>Observer-style GUI and BEAM tracing.</strong> Observability is OpenTelemetry and
+        Prometheus, not <code>erlang:trace/3</code>.
+      </li>
+      <li>
+        <strong>Transactions across actors / 2PC.</strong> Deferred indefinitely; sagas with compensating
+        actions cover the same ground.
+      </li>
+    </ul>
+
+    <footer>
+      Documents in this folder: <a href="index.html">Platform vision</a> ·
+      <a href="substrate-apps.html">Apps on the substrate</a> ·
+      <a href="orleans-framework.html">Apps via a framework</a> ·
+      <a href="erlang-substrate.html">Substrate roadmap</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
