@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Phase 1 — Wasmtime + WASI Preview 2</title>
+<link rel="stylesheet" href="../styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#161922',
+    primaryColor: '#1c2030',
+    primaryBorderColor: '#2a3045',
+    primaryTextColor: '#e6e8ee',
+    lineColor: '#7c9cff',
+    secondaryColor: '#11141c',
+    fontFamily: 'ui-monospace, Consolas, monospace'
+  }
+});
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="nav">
+    <div class="brand">Lunatic Platform</div>
+    <div class="tagline">Planning &amp; architecture docs</div>
+
+    <h4>Overview</h4>
+    <a href="../index.html">Platform vision</a>
+
+    <h4>Build paths</h4>
+    <a href="../substrate-apps.html">Apps on the substrate</a>
+    <a href="../orleans-framework.html">Apps via a framework</a>
+
+    <h4>Roadmap</h4>
+    <a href="../erlang-substrate.html">Substrate roadmap</a>
+
+    <h4>Phase plans</h4>
+    <a href="phase-1-wasmtime-upgrade.html" class="active">1 · Wasmtime upgrade</a>
+
+    <h4>Reference</h4>
+    <a href="../../CLAUDE.md">CLAUDE.md</a>
+  </aside>
+
+  <main>
+    <h1>
+      <span class="eyebrow">Phase 1 · Detailed plan</span>
+      Wasmtime + WASI Preview 2 upgrade
+    </h1>
+    <p class="lede">
+      Bring the workspace from <code>wasmtime = "8"</code> to current (~v27 at time of writing) and
+      adopt WASI Preview 2 alongside Preview 1 so existing guests keep working. This is a workspace-wide
+      refactor with no behavioural changes intended — every existing test should pass on completion. New
+      Preview 2 capabilities are added but not yet exposed to guests beyond a smoke-test surface; the
+      real use of Preview 2 (outbound HTTP, sockets) lands in phase 2.
+    </p>
+
+    <h2>Goal</h2>
+    <p>
+      Modernise the wasmtime stack so subsequent phases can rely on current APIs (component model,
+      <code>wasi-http</code>, pooling allocator, improved async host functions) without further
+      version migration work. End state: the workspace builds and tests pass against a current
+      wasmtime release; <code>wat/all_imports.wat</code> still asserts the full host-function surface;
+      no guest-visible behaviour changes.
+    </p>
+
+    <h2>Survey of the current surface</h2>
+    <p>Findings from a workspace survey before drafting this plan:</p>
+    <table>
+      <thead><tr><th>Area</th><th>Current state</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>wasmtime usage</td>
+          <td>27 files across 14 host-API crates, 329 occurrences. All via direct API; no generated bindings.</td>
+        </tr>
+        <tr>
+          <td>wiggle usage</td>
+          <td>Only <code>crates/lunatic-stdout-capture</code> uses <code>wiggle</code>. Everything else uses <code>wasmtime::Linker::func_wrap</code> / <code>func_wrap_async</code> directly.</td>
+        </tr>
+        <tr>
+          <td>WASI integration</td>
+          <td><code>crates/lunatic-wasi-api</code> wraps <code>wasi-common</code> / <code>wasmtime-wasi</code> v8 Preview 1 surface.</td>
+        </tr>
+        <tr>
+          <td>Fuel API</td>
+          <td><code>Store::out_of_fuel_trap</code> and <code>Store::out_of_fuel_async_yield</code> in <code>lunatic-process/src/runtimes/wasmtime.rs</code>. Both removed in newer wasmtime.</td>
+        </tr>
+        <tr>
+          <td>ResourceLimiter</td>
+          <td><code>lunatic-process</code> implements the v8 trait. Trait signature evolved in later versions.</td>
+        </tr>
+        <tr>
+          <td>Instantiation</td>
+          <td><code>InstancePre&lt;T&gt;</code> + <code>instantiate_async</code>. Largely compatible in newer versions.</td>
+        </tr>
+        <tr>
+          <td>Guest alloc/free pattern</td>
+          <td><code>lunatic-common-api</code> calls <code>lunatic_alloc</code> / <code>lunatic_free</code> via <code>Func::call_async</code> with <code>Val::I32</code>. Unchanged in newer wasmtime.</td>
+        </tr>
+        <tr>
+          <td>Import-surface assertion</td>
+          <td><code>wat/all_imports.wat</code> compiled and checked against the host linker on startup tests. Must stay in lockstep.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Sub-tasks</h2>
+    <p>
+      Each sub-task is intended to land as a single PR. Where a sub-task is large, it can split further;
+      the dependency arrows below show the minimum ordering.
+    </p>
+
+    <div class="mermaid">
+flowchart LR
+  T1["1a · Dependency bump<br/><small>known-failing state</small>"] --> T2["1b · Fuel + Store APIs"]
+  T1 --> T3["1c · ResourceLimiter"]
+  T2 --> T4["1d · Per-crate func_wrap audit"]
+  T3 --> T4
+  T4 --> T5["1e · WASI Preview 1 via<br/>wasmtime-wasi current"]
+  T5 --> T6["1f · WASI Preview 2 alongside<br/>Preview 1"]
+  T6 --> T7["1g · Validation<br/>tests + wat/all_imports"]
+  style T1 fill:#1c2030,stroke:#7c9cff
+  style T2 fill:#1c2030,stroke:#7c9cff
+  style T3 fill:#1c2030,stroke:#7c9cff
+  style T4 fill:#1c2030,stroke:#7c9cff
+  style T5 fill:#1c2030,stroke:#7c9cff
+  style T6 fill:#1c2030,stroke:#b988ff
+  style T7 fill:#1c2030,stroke:#5fd49f
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1a</span>
+        <h3>Dependency bump and compile-error inventory</h3>
+        <span class="size">PR scope: dependencies + diagnostics</span>
+      </header>
+      <p>
+        Bump <code>wasmtime</code>, <code>wasmtime-wasi</code>, <code>wasi-common</code>, and
+        <code>wiggle</code> in the root <code>Cargo.toml</code>'s <code>[workspace.dependencies]</code>
+        to current. Do not yet fix the resulting compile errors — instead, capture the full
+        <code>cargo check --workspace</code> output, classify the errors by category (fuel API,
+        ResourceLimiter, WASI surface, func_wrap signatures, other), and use that classification to
+        refine the remaining sub-task scopes.
+      </p>
+      <ul>
+        <li>Single commit bumping <code>wasmtime</code> / <code>wasmtime-wasi</code> / <code>wasi-common</code> / <code>wiggle</code> versions.</li>
+        <li>Run <code>cargo check --workspace --all-features</code>; capture output to <code>docs/phases/phase-1-error-inventory.md</code> (not committed; a working artifact).</li>
+        <li>PR body lists error categories and their counts.</li>
+      </ul>
+      <p>
+        <strong>Definition of done for 1a:</strong> branch builds <code>Cargo.lock</code> resolution
+        cleanly even though <code>cargo check</code> fails; error inventory captured and summarised in
+        the PR description. Tests and lint do not yet pass — this PR is intentionally non-green and
+        will only merge when 1b–1g land alongside, either as a stacked series or as additional commits
+        before this PR opens.
+      </p>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1b</span>
+        <h3>Fuel and Store API migration</h3>
+        <span class="size">PR scope: lunatic-process runtime</span>
+      </header>
+      <p>
+        Replace <code>Store::out_of_fuel_trap()</code> and <code>Store::out_of_fuel_async_yield(n, k)</code>
+        with the current fuel API (<code>Store::set_fuel</code>, <code>Store::fuel_async_yield_interval</code>).
+        Preserve the existing behaviour: out-of-fuel raises an async yield to allow the scheduler to
+        preempt, then continues; configured limits remain those from <code>DefaultProcessConfig</code>.
+      </p>
+      <ul>
+        <li>Update <code>crates/lunatic-process/src/runtimes/wasmtime.rs</code>.</li>
+        <li>Adjust <code>crates/lunatic-process/src/config.rs</code> if any constructor signatures move.</li>
+        <li>Verify <code>UNIT_OF_COMPUTE_IN_INSTRUCTIONS</code> still maps onto the new yield interval.</li>
+        <li>Tests: confirm fuel-exhaustion behaviour in <code>benches/benchmark.rs</code> still completes; if needed, add a small integration test that runs a long-loop guest and asserts preemption.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1c</span>
+        <h3>ResourceLimiter migration</h3>
+        <span class="size">PR scope: lunatic-process state</span>
+      </header>
+      <p>
+        Update the <code>ResourceLimiter</code> impl on <code>ProcessState</code> to the current trait
+        signature. Recent wasmtime versions added an async <code>ResourceLimiterAsync</code> variant
+        and changed return types on some methods. Decide whether to implement the sync or async
+        variant — sync should be enough since the existing limits are constant-time checks.
+      </p>
+      <ul>
+        <li>Update <code>crates/lunatic-process/src/state.rs</code>.</li>
+        <li>Confirm <code>store.limiter(|state| state)</code> wiring in <code>runtimes/wasmtime.rs</code> still applies.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1d</span>
+        <h3>Per-crate <code>func_wrap</code> audit</h3>
+        <span class="size">PR scope: all lunatic-*-api crates · likely 2–3 sub-PRs</span>
+      </header>
+      <p>
+        Walk each host-API crate and adjust any <code>Linker::func_wrap</code> /
+        <code>func_wrap_async</code> calls whose signatures fail to compile under the new wasmtime
+        version. Most should be mechanical (Send/Sync bound tightening, closure return types). Group
+        related crates into single PRs:
+      </p>
+      <ul>
+        <li>
+          <strong>Networking group:</strong> <code>lunatic-networking-api</code>,
+          <code>lunatic-distributed</code>, <code>lunatic-distributed-api</code>.
+        </li>
+        <li>
+          <strong>Messaging &amp; process group:</strong> <code>lunatic-messaging-api</code>,
+          <code>lunatic-process-api</code>, <code>lunatic-timer-api</code>,
+          <code>lunatic-registry-api</code>, <code>lunatic-error-api</code>,
+          <code>lunatic-trap-api</code>, <code>lunatic-version-api</code>.
+        </li>
+        <li>
+          <strong>Storage &amp; metrics:</strong> <code>lunatic-sqlite-api</code>,
+          <code>lunatic-metrics-api</code>, <code>lunatic-stdout-capture</code> (wiggle bump).
+        </li>
+        <li>
+          <strong>Common helpers:</strong> <code>lunatic-common-api</code> last, after concrete crates
+          stabilise the call sites it serves.
+        </li>
+      </ul>
+      <p>
+        Each grouped PR keeps the workspace closer to green but may still fail to build until siblings
+        land. The order is flexible; pick whichever group has the smallest diff first to validate the
+        migration shape.
+      </p>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1e</span>
+        <h3>WASI Preview 1 via current <code>wasmtime-wasi</code></h3>
+        <span class="size">PR scope: lunatic-wasi-api</span>
+      </header>
+      <p>
+        Current <code>wasmtime-wasi</code> splits Preview 1 into a <code>wasmtime_wasi::preview1</code>
+        module and reworks construction (<code>WasiCtx</code> builder shape, <code>WasiCtxBuilder</code>,
+        <code>add_to_linker</code> signatures). Port <code>lunatic-wasi-api</code> to the new Preview 1
+        surface without changing what guests see — same environment variables, command-line args,
+        preopen-dir host functions.
+      </p>
+      <ul>
+        <li>Update <code>crates/lunatic-wasi-api/src/lib.rs</code>.</li>
+        <li>Verify the three host functions in <code>wat/all_imports.wat</code> (<code>config_add_environment_variable</code>, <code>config_add_command_line_argument</code>, <code>config_preopen_dir</code>) retain identical signatures.</li>
+        <li>Run an existing WASI-using guest (e.g. <code>examples/native_process.rs</code> or the <code>cargo test</code> path) end-to-end.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1f</span>
+        <h3>WASI Preview 2 alongside Preview 1</h3>
+        <span class="size">PR scope: lunatic-wasi-api + lunatic-process linker</span>
+      </header>
+      <p>
+        Add WASI Preview 2 as a parallel surface, gated by a per-process config flag. Default off so
+        existing guests continue to use Preview 1. Preview 2 requires the wasmtime component model
+        (<code>Component</code> and <code>component::Linker</code>) rather than the classic
+        <code>Module</code> + <code>Linker</code> path.
+      </p>
+      <ul>
+        <li>Add a <code>can_use_wasi_preview_2</code> config flag (mirrors existing <code>config_can_*</code> permissions).</li>
+        <li>Introduce a parallel <code>component::Linker</code> wiring path in <code>lunatic-process</code> that activates only for components.</li>
+        <li>Add a smoke-test guest module compiled as a component that uses a Preview 2 capability (a simple <code>wasi:filesystem</code> read is enough).</li>
+        <li>Document in <code>wat/all_imports.wat</code> what is asserted vs Preview 1 only; the Preview 2 surface is not yet exposed to module-form guests.</li>
+      </ul>
+      <p>
+        <strong>Decision point:</strong> whether to wire <code>wasi-http</code> outbound here or defer
+        to phase 2. Default position: defer; phase 1 only validates that Preview 2 can be reached and
+        that the linker path works.
+      </p>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">1g</span>
+        <h3>Validation</h3>
+        <span class="size">PR scope: final consolidation</span>
+      </header>
+      <ul>
+        <li><code>cargo build --workspace --all-features --release</code> green.</li>
+        <li><code>cargo test --workspace</code> green; no pre-existing tests removed.</li>
+        <li><code>cargo fmt --check</code> and <code>cargo clippy --workspace --all-targets</code> green; new warnings triaged.</li>
+        <li><code>cargo build --benches</code> green; <code>cargo bench</code> runs to completion (numbers are not gates, but the bench must not regress catastrophically).</li>
+        <li><code>wat/all_imports.wat</code> still asserts every exposed host function.</li>
+        <li>Smoke run: an existing example (<code>examples/native_process.rs</code>) and the <code>cargo test</code>-via-WASM mode both work end-to-end against a sample guest.</li>
+        <li>Documentation in step: update the gap table in <code>docs/index.html</code> so the <code>wasmtime</code> row moves from "v8 (years old)" to current; mark phase 1 complete on <code>docs/erlang-substrate.html</code>.</li>
+      </ul>
+    </div>
+
+    <h2>Test strategy</h2>
+    <p>
+      The phase is a refactor; no new feature tests are required, but the safety net needs to be
+      explicit. Three layers:
+    </p>
+    <ul>
+      <li>
+        <strong>Existing tests, unchanged.</strong> The whole workspace's current test suite must pass.
+        Any test that is removed or its assertions weakened during migration is a red flag and must be
+        called out in the PR.
+      </li>
+      <li>
+        <strong>Import-signature assertion.</strong> The <code>wat/all_imports.wat</code> import
+        signatures must still match the host linker exactly. This is the closest thing to an ABI
+        contract and is the single most important regression gate.
+      </li>
+      <li>
+        <strong>End-to-end smoke run.</strong> A WASI-using guest, a TCP-using guest, and the
+        <code>cargo test</code>-via-WASM mode all execute to completion. These exercise wasi,
+        networking, and the test-runner mode dispatch in <code>src/main.rs</code> together.
+      </li>
+    </ul>
+    <p>
+      One new test is justified by this phase: a Preview-2-component smoke test, added in 1f, that
+      proves the component linker path is reachable. It does not need to do real work.
+    </p>
+
+    <h2>Files expected to change</h2>
+    <p>Best-guess inventory; the 1a error inventory will refine this.</p>
+    <table>
+      <thead><tr><th>File</th><th>Sub-task</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td><code>Cargo.toml</code> (workspace)</td><td>1a</td><td>Dependency version bumps</td></tr>
+        <tr><td><code>crates/lunatic-process/src/runtimes/wasmtime.rs</code></td><td>1b, 1c, 1f</td><td>Fuel API, ResourceLimiter wiring, optional component linker</td></tr>
+        <tr><td><code>crates/lunatic-process/src/state.rs</code></td><td>1c</td><td>ResourceLimiter trait impl</td></tr>
+        <tr><td><code>crates/lunatic-process/src/config.rs</code></td><td>1b, 1f</td><td>Fuel config; Preview 2 toggle</td></tr>
+        <tr><td><code>crates/lunatic-wasi-api/src/lib.rs</code></td><td>1e, 1f</td><td>Preview 1 port; Preview 2 surface</td></tr>
+        <tr><td><code>crates/lunatic-common-api/src/lib.rs</code></td><td>1d</td><td>Caller / Memory helpers may need adjustment</td></tr>
+        <tr><td>All <code>crates/lunatic-*-api/src/lib.rs</code></td><td>1d</td><td>func_wrap signature touch-ups</td></tr>
+        <tr><td><code>crates/lunatic-stdout-capture/src/lib.rs</code></td><td>1d</td><td>wiggle macro version bump</td></tr>
+        <tr><td><code>crates/lunatic-distributed/src/quic/quin.rs</code></td><td>1d</td><td>QUIC adjacent to wasmtime; verify only</td></tr>
+        <tr><td><code>wat/all_imports.wat</code></td><td>1g</td><td>Confirm signatures still match</td></tr>
+        <tr><td><code>docs/index.html</code>, <code>docs/erlang-substrate.html</code></td><td>1g</td><td>Update gap-table row; mark phase 1 done</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Open questions</h2>
+    <ul>
+      <li>
+        <strong>Pooling allocator.</strong> Current wasmtime supports a pooling allocator that
+        significantly speeds up activation creation. Do we adopt it in phase 1 (small additional risk),
+        or land it as a follow-up tuning PR? Default: defer to a tuning PR after 1g.
+      </li>
+      <li>
+        <strong>Epoch interruption.</strong> Current wasmtime supports epoch-based interruption as
+        an alternative to fuel for preemption. Fuel still works; switching is non-trivial because the
+        scheduler is currently fuel-aware. Default: keep fuel; revisit only if fuel-based preemption
+        regresses under the new version.
+      </li>
+      <li>
+        <strong>Component-model exposure to guests.</strong> Phase 1 wires the component linker path
+        only for the Preview 2 smoke test. Whether the platform offers guest authors a stable
+        component-model story is a longer conversation deferred to a future phase.
+      </li>
+      <li>
+        <strong>QUIC compatibility.</strong> <code>lunatic-distributed</code> uses QUIC via quinn,
+        which depends on rustls. Not strictly part of the wasmtime upgrade but ages alongside; verify
+        no version conflicts at 1a, escalate to a sub-task only if compile fails there.
+      </li>
+    </ul>
+
+    <h2>Definition of done for phase 1</h2>
+    <p>
+      All sub-tasks 1a through 1g have merged to <code>main</code>; the validation checklist in 1g is
+      satisfied; the gap-table row for wasmtime is updated; phase 2 (outbound HTTP / TLS) can begin
+      without further wasmtime work. Per-change gates from
+      <a href="../index.html#definition-of-done">platform definition of done</a> apply to every
+      sub-task PR.
+    </p>
+
+    <footer>
+      Documents in this folder: <a href="../index.html">Platform vision</a> ·
+      <a href="../substrate-apps.html">Apps on the substrate</a> ·
+      <a href="../orleans-framework.html">Apps via a framework</a> ·
+      <a href="../erlang-substrate.html">Substrate roadmap</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
