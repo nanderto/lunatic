@@ -23,6 +23,17 @@ The `lunatic` binary doubles as a `cargo test` runner for WASM crates: when `CAR
 
 Lunatic 0.12 implied `run` as the default subcommand; `is_run_implied()` in `src/main.rs` preserves that by injecting `run` when argv[1] looks like `--bench`, `--dir`, or `*.wasm`.
 
+## Work process
+
+All changes follow a branch-and-PR flow. Never commit directly to `main`.
+
+1. Create a feature branch off `main` with a descriptive prefix: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `refactor/<topic>`, etc.
+2. Make commits on the branch satisfying the definition-of-done gates below.
+3. Push the branch and open a pull request against `main` with `gh pr create`.
+4. The PR is the unit of review and merge; further changes go as additional commits to the same branch and are picked up automatically.
+
+If `gh pr create` fails with "Resource not accessible by personal access token," it means `GITHUB_TOKEN` is overriding the keyring auth. Clear it for the call: `$env:GITHUB_TOKEN=""; gh pr create ...` (PowerShell) — the keyring credential has the `repo` scope needed.
+
 ## Definition of done (every change)
 
 Every change that adds or modifies functionality must satisfy these gates before it is considered complete — per increment, not only at phase boundaries:
