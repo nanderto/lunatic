@@ -328,10 +328,16 @@ sequenceDiagram
 
     <h2>Definition of done</h2>
     <p>
-      A worked example exists where a multi-silo Lunatic cluster runs a virtual-actor service with
-      persistent state, reminders, single-activation, automatic failover on node loss, and a typed Rust
-      client. The framework crate has no <code>unsafe</code> outside FFI shims and depends only on
-      <code>rust-lib</code>.
+      The framework is "done" when a worked example exists where a multi-silo Lunatic cluster runs a
+      virtual-actor service with persistent state, reminders, single-activation, automatic failover on
+      node loss, and a typed Rust client. The framework crate has no <code>unsafe</code> outside FFI
+      shims and depends only on <code>rust-lib</code>.
+    </p>
+    <p>
+      Each individual change inside any phase must also satisfy the per-change gates — tests, lint, and
+      documentation in step with the code. See
+      <a href="index.html#definition-of-done">platform definition of done</a> for the gates that apply
+      to every increment.
     </p>
 
     <footer>

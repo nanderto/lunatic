@@ -246,6 +246,63 @@ gantt
       they land.
     </p>
 
+    <h2 id="definition-of-done">Definition of done</h2>
+    <p>
+      Every addition of functionality — substrate primitive, host capability, behaviour crate, framework
+      phase — is complete only when all of the following hold. This applies per increment, not only at
+      phase boundaries.
+    </p>
+    <table>
+      <thead><tr><th>Gate</th><th>Requirement</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Tests cover new code</td>
+          <td>
+            New code carries tests at the appropriate level: unit tests for libraries, integration
+            tests for host-function changes (against a guest module exercising the call), end-to-end
+            tests for framework features. Coverage is qualitative — every behaviour change has at
+            least one test demonstrating it.
+          </td>
+        </tr>
+        <tr>
+          <td>Full suite passes</td>
+          <td>
+            <code>cargo test</code> across the workspace passes, including all pre-existing tests.
+            Per-crate tests pass for any crate touched. Bench builds are not broken
+            (<code>cargo build --benches</code>).
+          </td>
+        </tr>
+        <tr>
+          <td>Lint passes</td>
+          <td>
+            <code>cargo fmt --check</code> and <code>cargo clippy --workspace --all-targets</code>
+            both pass with no new warnings.
+          </td>
+        </tr>
+        <tr>
+          <td>Host-function surface is asserted</td>
+          <td>
+            Any host-function addition, removal, or rename updates
+            <code>wat/all_imports.wat</code>; the import-signature test passes.
+          </td>
+        </tr>
+        <tr>
+          <td>Documentation reflects reality</td>
+          <td>
+            The relevant page in <code>/docs</code> is updated as part of the same change — the
+            substrate roadmap when a substrate primitive lands, the Orleans plan when a framework
+            phase lands, the patterns guide when a new pattern becomes idiomatic, the gap table on
+            this page when a row's status changes.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <strong>Scope rule.</strong> Phase-level "definition of done" sections on the roadmap pages
+      describe what each phase produces. The gates above describe what every individual change within
+      a phase must satisfy before it merges. Both apply.
+    </div>
+
     <h2>Out of scope</h2>
     <ul>
       <li>

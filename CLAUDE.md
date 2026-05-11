@@ -23,6 +23,18 @@ The `lunatic` binary doubles as a `cargo test` runner for WASM crates: when `CAR
 
 Lunatic 0.12 implied `run` as the default subcommand; `is_run_implied()` in `src/main.rs` preserves that by injecting `run` when argv[1] looks like `--bench`, `--dir`, or `*.wasm`.
 
+## Definition of done (every change)
+
+Every change that adds or modifies functionality must satisfy these gates before it is considered complete — per increment, not only at phase boundaries:
+
+- **Tests cover new code.** Unit tests for libraries, integration tests for host-function changes (with a guest WASM exercising the import), end-to-end tests for framework features. Every behaviour change has at least one test demonstrating it.
+- **Full suite passes.** `cargo test` across the workspace, plus per-crate `cargo test -p <crate>` for any crate touched. Existing tests must continue to pass.
+- **Lint passes.** `cargo fmt --check` and `cargo clippy --workspace --all-targets` with no new warnings.
+- **Host-function surface is asserted.** Any addition, removal, or rename of a host function updates `wat/all_imports.wat`; the import-signature test passes.
+- **Documentation is updated in step.** The relevant page in `/docs` is updated as part of the same change — substrate roadmap when a primitive lands, Orleans plan when a framework phase lands, patterns guide when a new pattern becomes idiomatic, gap table on the index page when a row's status changes.
+
+The phase-level "definition of done" sections in `/docs/erlang-substrate.html` and `/docs/orleans-framework.html` describe what each phase produces. The gates above describe what every individual change within a phase must satisfy.
+
 ## Host function changes
 
 Adding, removing, or renaming any host function exposed to guest WASM **requires** a matching edit to `wat/all_imports.wat`. That file is asserted against at load time to guarantee the runtime exposes the full import surface guest modules expect. CI / review will reject host-function changes that don't update it.

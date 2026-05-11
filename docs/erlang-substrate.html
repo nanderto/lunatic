@@ -268,8 +268,10 @@ sequenceDiagram
       </li>
     </ul>
     <p>
-      At that point the runtime is a stable platform; future work splits between substrate-direct
-      application patterns and framework crates, both as first-class build paths.
+      Each individual change inside any phase must also satisfy the per-change gates — tests, lint,
+      <code>wat/all_imports.wat</code> updates, and documentation in step with the code. See
+      <a href="index.html#definition-of-done">platform definition of done</a> for the gates that apply
+      to every increment.
     </p>
 
     <footer>
