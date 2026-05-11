@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BEAM-style Substrate — Roadmap</title>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#161922',
+    primaryColor: '#1c2030',
+    primaryBorderColor: '#2a3045',
+    primaryTextColor: '#e6e8ee',
+    lineColor: '#7c9cff',
+    secondaryColor: '#11141c',
+    fontFamily: 'ui-monospace, Consolas, monospace'
+  }
+});
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="nav">
+    <div class="brand">Lunatic Platform</div>
+    <div class="tagline">Planning &amp; architecture docs</div>
+
+    <h4>Overview</h4>
+    <a href="index.html">Platform vision</a>
+
+    <h4>Build paths</h4>
+    <a href="substrate-apps.html">Apps on the substrate</a>
+    <a href="orleans-framework.html">Apps via a framework</a>
+
+    <h4>Roadmap</h4>
+    <a href="erlang-substrate.html" class="active">Substrate roadmap</a>
+
+    <h4>Reference</h4>
+    <a href="../CLAUDE.md">CLAUDE.md</a>
+    <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a>
+    <a href="../README.md">README.md</a>
+  </aside>
+
+  <main>
+    <h1>
+      <span class="eyebrow">Roadmap · Substrate</span>
+      Completing the BEAM-style substrate
+    </h1>
+    <p class="lede">
+      The execution model — preemptive scheduling, cheap isolated processes, mailboxes, links — is in
+      place. The surrounding primitive surface is not. This roadmap completes the substrate so it
+      provides the primitives an Erlang/OTP-style runtime would: monitors, node-monitor events,
+      supervision, process groups, durable timers, persistence providers, and modern networking.
+    </p>
+
+    <h2>Target model</h2>
+    <p>
+      We want the host to provide the primitives, not the policy. The Erlang/OTP world spent decades
+      settling on a small set of primitives that compose well: processes, messages, links, monitors,
+      named registries, process groups, supervision, node membership, timers. We aim to provide those
+      and stop there — every higher-level pattern lives in guest-side crates that authors can swap.
+    </p>
+
+    <div class="mermaid">
+flowchart LR
+  subgraph HOST["Host (Rust crates)"]
+    direction TB
+    P[lunatic-process<br/>+ monitors / links]
+    M[lunatic-messaging-api<br/>mailbox + selective receive]
+    R[lunatic-registry-api<br/>names + process groups]
+    D[lunatic-distributed<br/>membership events]
+    T[lunatic-timer-api<br/>durable + volatile]
+    S[lunatic-store-api<br/>persistence providers]
+    N[lunatic-networking-api<br/>TCP / UDP / TLS / HTTP]
+    W[lunatic-wasi-api<br/>WASI Preview 2]
+  end
+  subgraph GUEST["Guest (rust-lib crates)"]
+    direction TB
+    G1[Supervisor behaviour]
+    G2[GenServer-style]
+    G3[Process groups / PubSub]
+    G4[Framework crates]
+  end
+  HOST --> GUEST
+  style HOST fill:#1c2030,stroke:#7c9cff
+  style GUEST fill:#1c2030,stroke:#5fd49f
+    </div>
+
+    <h2>Phased plan</h2>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 1</span>
+        <h3>Wasmtime modernisation + WASI Preview 2</h3>
+        <span class="size">~6–10 weeks</span>
+      </header>
+      <p>
+        The single biggest unblocker. Today <code>wasmtime</code>, <code>wasi-common</code>, and
+        <code>wiggle</code> are pinned at v8 — multiple years behind upstream. This blocks
+        outbound HTTP, modern TLS, the component model, the pooling allocator, and async-host-function
+        ergonomics. Every later phase is easier on a current runtime.
+      </p>
+      <ul>
+        <li>Bump <code>wasmtime</code> / <code>wasi-common</code> / <code>wiggle</code> to current.</li>
+        <li>Port every <code>lunatic-*-api</code> crate to the new wiggle / linker API.</li>
+        <li>Adopt WASI Preview 2 alongside Preview 1 so existing guests keep working.</li>
+        <li>Wire <code>wasi-http</code> outbound as a host capability (gated by per-process permissions).</li>
+        <li>Update <code>wat/all_imports.wat</code> to assert both the legacy and Preview 2 surfaces.</li>
+      </ul>
+      <p>
+        <span class="tag warn">Risk</span> Largest single chunk of work. Mitigation: do it on a long-lived
+        branch with the existing test suite as the regression gate; do not mix with feature work.
+      </p>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 2</span>
+        <h3>Outbound HTTP &amp; TLS for guests</h3>
+        <span class="size">~3–4 weeks · depends on phase 1</span>
+      </header>
+      <p>
+        Once Preview 2 is in, expose <code>wasi-http</code> outbound and add <code>tls_connect</code> /
+        <code>tls_accept</code> host functions (rustls-backed, reusing the work already done for the
+        control-plane mTLS in <code>5eb9570</code>). This unblocks storage providers, OpenTelemetry
+        exporters, and any guest that needs to call HTTPS.
+      </p>
+      <ul>
+        <li><code>wasi-http</code> outbound, with per-process allow-list for hosts.</li>
+        <li>TLS server + client host functions for raw TCP grains that need it.</li>
+        <li>Optional: blessed Rust client crates (Postgres, Redis) that use these host APIs.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 3</span>
+        <h3>Monitors and membership events</h3>
+        <span class="size">~1–2 weeks · independent of 1/2</span>
+      </header>
+      <p>
+        Two small additive host changes that unblock most higher-level framework work. Both are
+        Erlang-equivalent primitives; neither is currently in Lunatic.
+      </p>
+      <ul>
+        <li>
+          <strong>Monitors with refs.</strong> <code>monitor(pid) -&gt; ref</code> and
+          <code>demonitor(ref)</code>; delivers <code>{DOWN, ref, reason}</code> to the monitor's
+          mailbox when the target exits. One-way and observation-only — unlike links, the monitor
+          does not die with the target.
+        </li>
+        <li>
+          <strong>Node-monitor events.</strong> A subscription host function that delivers
+          <code>{node_up, id}</code> / <code>{node_down, id}</code> to a guest process whenever cluster
+          membership changes. Replaces today's poll-only <code>nodes_count</code> / <code>get_nodes</code>.
+        </li>
+      </ul>
+
+      <div class="mermaid">
+sequenceDiagram
+  participant A as Observer process
+  participant H as Host
+  participant B as Target process
+  A->>H: monitor(B) -> ref
+  H->>A: ref
+  Note over A,H: A continues working; not linked
+  B-->>H: exits with reason
+  H->>A: {DOWN, ref, reason}
+  Note over A: A reacts (eg restart, redirect)
+      </div>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 4</span>
+        <h3>Process groups &amp; PubSub primitive</h3>
+        <span class="size">~2–3 weeks · depends on phase 3</span>
+      </header>
+      <p>
+        Erlang's <code>pg</code> module: named groups that any process can join, and a single host call
+        broadcasts to all members. Used for stream fan-out, pubsub, presence, and any one-to-many delivery
+        pattern. Implementable as an extension to <code>lunatic-registry-api</code>.
+      </p>
+      <ul>
+        <li><code>group_join(name, pid)</code>, <code>group_leave(name, pid)</code>, <code>group_members(name)</code>.</li>
+        <li><code>group_send(name, msg)</code> — single host call, fan-out inside the host.</li>
+        <li>Cluster-aware variant that broadcasts across nodes via the distribution layer.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 5</span>
+        <h3>Supervision behaviour (guest-side crate)</h3>
+        <span class="size">~2 weeks · depends on phase 3</span>
+      </header>
+      <p>
+        Build a blessed <code>lunatic-supervisor</code> crate on top of monitors + spawn. Implements the
+        Erlang restart strategies: <code>one_for_one</code>, <code>one_for_all</code>,
+        <code>rest_for_one</code>, <code>simple_one_for_one</code>, with intensity/period throttling and
+        child specs. No host changes required — this is policy that belongs in user space, but it should
+        be a blessed shared crate so frameworks don't each reinvent it.
+      </p>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 6</span>
+        <h3>Persistence provider abstraction</h3>
+        <span class="size">~3–4 weeks · depends on phase 2</span>
+      </header>
+      <p>
+        A small <code>lunatic-store-api</code> host crate exposing a key-value-with-etag interface backed
+        by pluggable providers. Frameworks (virtual actors, event sourcing, workflows) all need this.
+      </p>
+      <ul>
+        <li>Host trait: <code>read(key) -&gt; (etag, bytes)</code>, <code>write(key, etag, bytes) -&gt; new_etag</code>, <code>delete(key, etag)</code>.</li>
+        <li>Initial providers: SQLite (embedded), filesystem, HTTP-backed (needs phase 2).</li>
+        <li>ETag-based optimistic concurrency, not transactions.</li>
+        <li>Streaming read/write for large values.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 7</span>
+        <h3>Durable timers (reminders)</h3>
+        <span class="size">~2–3 weeks · depends on phase 6</span>
+      </header>
+      <p>
+        Today <code>lunatic::timer</code> is in-memory. A reminder is a timer that survives process and
+        silo restarts. Implementation: persist the schedule via the storage provider, on host startup
+        replay due reminders, on fire deliver a message — activating the recipient if dormant.
+      </p>
+      <ul>
+        <li><code>reminder_register(target, name, due, period) -&gt; id</code>.</li>
+        <li><code>reminder_cancel(id)</code>.</li>
+        <li>Delivery: message to the named target, even if not currently running (host re-activates it).</li>
+        <li>Backing store: pluggable, defaults to SQLite via the persistence provider.</li>
+      </ul>
+    </div>
+
+    <h2>Out of scope for the substrate</h2>
+    <ul>
+      <li><strong>Hot code loading.</strong> Replaced by rolling deploys with module/grain versioning at the framework layer.</li>
+      <li><strong>ETS / Mnesia.</strong> Persistence is via storage providers; no in-runtime term store.</li>
+      <li><strong>BEAM-style tracing (<code>erlang:trace/3</code>, observer GUI).</strong> Replaced by OpenTelemetry spans + Prometheus metrics, which is a guest-side concern once outbound HTTP works.</li>
+      <li><strong>Ports / NIFs.</strong> WASM is the isolation boundary; native extensions don't fit the model.</li>
+      <li><strong>Pattern matching on receive.</strong> Tag-based receive plus codegen in framework crates covers what guests need.</li>
+    </ul>
+
+    <h2>Definition of done</h2>
+    <p>The substrate is "done" when both of the following hold:</p>
+    <ul>
+      <li>
+        <strong>Substrate-direct applications are production-ready.</strong> A team can build a
+        supervised, distributed, persistent network service against the primitives alone — no framework
+        required — in the Erlang/OTP tradition. This milestone lands at the end of phase 5 (supervision
+        crate), well before framework work completes. See <a href="substrate-apps.html">building on the substrate</a>.
+      </li>
+      <li>
+        <strong>Frameworks can be implemented as ordinary crates.</strong> A third party can build a
+        virtual-actor framework, a job queue, and a Phoenix-style web server as separate Rust crates
+        that depend only on <code>rust-lib</code>, without touching any <code>lunatic-*-api</code> crate.
+      </li>
+    </ul>
+    <p>
+      At that point the runtime is a stable platform; future work splits between substrate-direct
+      application patterns and framework crates, both as first-class build paths.
+    </p>
+
+    <footer>
+      Documents in this folder: <a href="index.html">Platform vision</a> ·
+      <a href="substrate-apps.html">Apps on the substrate</a> ·
+      <a href="orleans-framework.html">Apps via a framework</a> ·
+      <a href="erlang-substrate.html">Substrate roadmap</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

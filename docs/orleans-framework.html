@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Orleans-style Framework — Roadmap</title>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#161922',
+    primaryColor: '#1c2030',
+    primaryBorderColor: '#2a3045',
+    primaryTextColor: '#e6e8ee',
+    lineColor: '#7c9cff',
+    secondaryColor: '#11141c',
+    fontFamily: 'ui-monospace, Consolas, monospace'
+  }
+});
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="nav">
+    <div class="brand">Lunatic Platform</div>
+    <div class="tagline">Planning &amp; architecture docs</div>
+
+    <h4>Overview</h4>
+    <a href="index.html">Platform vision</a>
+
+    <h4>Build paths</h4>
+    <a href="substrate-apps.html">Apps on the substrate</a>
+    <a href="orleans-framework.html" class="active">Apps via a framework</a>
+
+    <h4>Roadmap</h4>
+    <a href="erlang-substrate.html">Substrate roadmap</a>
+
+    <h4>Reference</h4>
+    <a href="../CLAUDE.md">CLAUDE.md</a>
+    <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a>
+    <a href="../README.md">README.md</a>
+  </aside>
+
+  <main>
+    <h1>
+      <span class="eyebrow">Roadmap · Framework</span>
+      Orleans-style virtual actors on Lunatic
+    </h1>
+    <p class="lede">
+      A guest-side Rust crate, <code>lunatic-grain</code>, that delivers Orleans semantics on top of the
+      completed BEAM-style substrate: stable grain identity, on-demand activation, single-activation
+      guarantee, idle deactivation, persistent state, placement strategies, durable reminders, and
+      typed proxies. No runtime fork required — the substrate work in the sibling roadmap is sufficient.
+    </p>
+
+    <h2>Concept mapping</h2>
+    <p>The framework maps Orleans concepts onto substrate primitives:</p>
+    <table>
+      <thead><tr><th>Orleans concept</th><th>Substrate primitive</th></tr></thead>
+      <tbody>
+        <tr><td>Activation (running grain)</td><td>Lunatic process (WASM instance)</td></tr>
+        <tr><td>Grain identity <code>(interface, key)</code></td><td>Entry in cluster-wide directory</td></tr>
+        <tr><td>Silo</td><td>Lunatic node</td></tr>
+        <tr><td>Cluster + membership</td><td>Distribution layer + node-monitor events</td></tr>
+        <tr><td>Silo-to-silo RPC</td><td><code>lunatic::distributed::send</code> / <code>spawn</code></td></tr>
+        <tr><td>Local mailbox</td><td><code>lunatic::message</code> with tags</td></tr>
+        <tr><td>Volatile timers</td><td><code>lunatic::timer::send_after</code></td></tr>
+        <tr><td>Reminders (durable)</td><td>Substrate durable timer primitive</td></tr>
+        <tr><td>Persistence providers</td><td>Substrate <code>lunatic-store-api</code></td></tr>
+        <tr><td>Observers</td><td>Guest-side: subscriber list + broadcast</td></tr>
+        <tr><td>Streams</td><td>Guest-side: stream-grain + process groups</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Architecture</h2>
+
+    <div class="mermaid">
+flowchart TB
+  subgraph CL["Cluster"]
+    direction LR
+    subgraph S1["Silo A (Lunatic node)"]
+      DA["Directory shard A"]
+      G1["Grain<br/>(User/42)"]
+      G2["Grain<br/>(Cart/99)"]
+    end
+    subgraph S2["Silo B (Lunatic node)"]
+      DB["Directory shard B"]
+      G3["Grain<br/>(User/17)"]
+      G4["Grain<br/>(Order/5)"]
+    end
+    subgraph S3["Silo C (Lunatic node)"]
+      DC["Directory shard C"]
+      RS["Reminder service"]
+    end
+  end
+  Client["Caller (client or another grain)"]
+  Client -->|GrainRef invoke| DA
+  DA -.->|owner lookup| DB
+  DA -->|spawn / route| G1
+  RS -.->|fire reminder| G4
+  DA <-.->|membership events| DB
+  DB <-.->|membership events| DC
+  style S1 fill:#1c2030,stroke:#7c9cff
+  style S2 fill:#1c2030,stroke:#7c9cff
+  style S3 fill:#1c2030,stroke:#7c9cff
+  style Client fill:#11141c,stroke:#2a3045
+    </div>
+
+    <p>
+      Each silo owns a shard of the grain directory, partitioned by consistent hash on the grain id.
+      The owner of a shard knows where every activation of grains in its range lives. On a method call,
+      the caller's local resolver consults the local cache first, falls back to the owning silo on miss,
+      and caches the result. The owner enforces single-activation through a compare-and-swap on the
+      directory entry.
+    </p>
+
+    <h2>Call resolution sequence</h2>
+
+    <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Caller
+  participant L as Local cache
+  participant O as Directory owner
+  participant H as Hosting silo
+  participant G as Activation
+  C->>L: lookup (User, 42)
+  alt cached
+    L-->>C: silo X
+  else miss
+    L->>O: lookup (User, 42)
+    alt entry exists
+      O-->>L: silo X (cached)
+    else does not exist
+      O->>O: CAS create entry
+      O->>H: spawn activation
+      H-->>O: pid
+      O-->>L: silo X
+    end
+  end
+  C->>G: send method message (via distribution)
+  G-->>C: reply
+    </div>
+
+    <p>
+      Single-activation is preserved because only the directory owner can create entries, and creation
+      goes through a CAS. Races resolve to one winner; losers redirect. On silo failure, membership
+      events from the substrate trigger directory cleanup; the next call recreates the activation
+      elsewhere via the same path.
+    </p>
+
+    <h2>Phased plan</h2>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 0</span>
+        <h3>Single-node scaffolding</h3>
+        <span class="size">~3–4 weeks</span>
+      </header>
+      <p>Prove the model end-to-end on a single node before touching distribution.</p>
+      <ul>
+        <li><code>Grain</code> trait with <code>on_activate</code> / <code>on_deactivate</code> hooks.</li>
+        <li><code>#[grain]</code> proc-macro: turns an async trait into a server loop + typed proxy.</li>
+        <li><code>GrainRef&lt;T&gt;</code> holds <code>(type_id, key)</code>; <code>GrainFactory::get&lt;T&gt;(key)</code>.</li>
+        <li>Local <code>Directory</code> process registered under a well-known name in <code>lunatic::registry</code>.</li>
+        <li>Idle deactivation via per-activation deadline timer.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 1</span>
+        <h3>Persistence provider abstraction</h3>
+        <span class="size">~3 weeks · depends on substrate phase 6</span>
+      </header>
+      <p>
+        Wire grains to the substrate's storage provider. <code>#[grain(state = MyState)]</code> injects
+        load on activate, save before deactivate (or on explicit <code>save_state()</code>), with ETag
+        optimistic concurrency. ETag mismatch deactivates the grain so the next call reloads.
+      </p>
+      <ul>
+        <li>SQLite-backed provider (default).</li>
+        <li>HTTP-backed provider sketch (Postgres / Redis / S3 via outbound HTTP).</li>
+        <li>Optional: event-sourced variant — append events on every handler, replay on activation.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 2</span>
+        <h3>Distributed directory &amp; single-activation</h3>
+        <span class="size">~6–8 weeks · depends on substrate phases 3–4</span>
+      </header>
+      <p>The hard part. Two design options, both proven in Orleans.</p>
+
+      <h3>Option A: consistent-hash directory (recommended start)</h3>
+      <p>
+        Grain id hashes to a node which owns its directory entry. Membership-version-aware so ownership
+        is stable. On membership change, the new owner handshakes with the previous owner for known
+        entries; orphans deactivate on idle.
+      </p>
+
+      <h3>Option B: gossip directory</h3>
+      <p>
+        Every silo caches <code>(grain -&gt; silo)</code> and gossips updates. Faster reads, fuzzier
+        races. Orleans 7+ supports this; could be added later as an alternative directory backend.
+      </p>
+
+      <h3>Workstream</h3>
+      <ul>
+        <li>Cluster membership view from substrate node-monitor events.</li>
+        <li>Consistent hashing module (jump or rendezvous), keyed on node id + membership version.</li>
+        <li>Directory shard process per silo; CAS-based entry creation.</li>
+        <li>Activation race protection: only the owner can spawn.</li>
+        <li>Failover: on <code>{node_down}</code>, owner removes entries; next call reactivates.</li>
+        <li>Local resolver cache with retry-on-stale.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 3</span>
+        <h3>Placement strategies</h3>
+        <span class="size">~2 weeks · depends on phase 2</span>
+      </header>
+      <p>Pluggable strategy interface invoked by the directory owner when creating an activation.</p>
+      <ul>
+        <li><code>RandomPlacement</code> — default, picks any live silo.</li>
+        <li><code>PreferLocalPlacement</code> — caller's silo first, fall back to random.</li>
+        <li><code>HashBasedPlacement</code> — id hash → silo, sticky to membership version.</li>
+        <li><code>StatelessWorker</code> — bypasses directory; multiple activations per silo for stateless work.</li>
+        <li><code>ResourceOptimizedPlacement</code> — deferred until silo load metrics exist.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 4</span>
+        <h3>Reminders &amp; observers</h3>
+        <span class="size">~2 weeks · depends on substrate phase 7</span>
+      </header>
+      <ul>
+        <li>
+          <strong>Reminders.</strong> Thin guest-side wrapper around the substrate's durable timer
+          primitive. Register against a <code>GrainRef</code>; on fire the host reactivates the grain
+          if dormant and delivers the message.
+        </li>
+        <li>
+          <strong>Observers.</strong> Pure guest-side. Grain holds <code>Vec&lt;ObserverRef&gt;</code>;
+          broadcast on events. No delivery guarantee (Orleans is explicit about this); for guaranteed
+          delivery, build streams.
+        </li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 5</span>
+        <h3>Streams</h3>
+        <span class="size">~4–6 weeks · depends on phases 2 and 4</span>
+      </header>
+      <p>Two complementary implementations:</p>
+      <ul>
+        <li>
+          <strong>Stream-grain pattern.</strong> A <code>StreamGrain</code> per stream id uses the
+          directory + single-activation already built. Keeps a small ring buffer, fan-outs to subscribers
+          via process groups. Good enough for many workloads, no external dependency.
+        </li>
+        <li>
+          <strong>Broker-backed.</strong> <code>KafkaStreamProvider</code> / <code>NatsStreamProvider</code>
+          via outbound networking. Production-grade durability and scale.
+        </li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <header>
+        <span class="badge">Phase 6</span>
+        <h3>Interceptors, versioning, observability</h3>
+        <span class="size">~3 weeks · ongoing thereafter</span>
+      </header>
+      <ul>
+        <li>Interceptors (<code>IIncomingGrainCallFilter</code> shape) injected by codegen around dispatch.</li>
+        <li>
+          Grain versioning: tag interfaces with a version in the macro; directory refuses routing to
+          older silos for newer versions during rolling deploys. This is the replacement for hot reload.
+        </li>
+        <li>OpenTelemetry spans propagated through the call envelope; structured logging via stdout-capture or dedicated tracing API.</li>
+      </ul>
+    </div>
+
+    <h2>Out of scope</h2>
+    <ul>
+      <li>
+        <strong>Distributed transactions (2PC across grains).</strong> Months of work, narrow use case.
+        Recommend sagas with compensating actions instead. Deferred indefinitely.
+      </li>
+      <li>
+        <strong>Grain services / system targets.</strong> Niche Orleans features; revisit if needed.
+      </li>
+      <li>
+        <strong>Strongly-typed remote interface across language boundaries.</strong> Initial release is
+        Rust-to-Rust grains; cross-language requires the wasmtime component model and stable IDL — possible
+        on the modernised substrate but not in the first version.
+      </li>
+    </ul>
+
+    <h2>Performance characteristics</h2>
+    <p>
+      Building Orleans <em>after</em> the substrate completion (vs on the current runtime) costs nothing
+      on the steady-state per-call path — the new substrate primitives are additive and not on the hot
+      path of <code>send</code>/<code>receive</code>. The completed path is modestly faster on:
+    </p>
+    <ul>
+      <li>Failover (monitors react in one hop vs poll-interval lag).</li>
+      <li>Reminder precision (host-side firing vs guest-side tick scan).</li>
+      <li>Fan-out (host-side <code>group_send</code> vs guest loop).</li>
+    </ul>
+    <p>
+      Versus native .NET Orleans, expect within ~10–20% on call throughput, with better tail latency
+      (real preemption) and stronger fault isolation (WASM sandbox), at the cost of higher per-activation
+      memory. The trade-offs land on the right side for typical Orleans workloads (gaming, IoT, durable
+      services, business workflows), all of which are network- and persistence-bound.
+    </p>
+
+    <h2>Definition of done</h2>
+    <p>
+      A worked example exists where a multi-silo Lunatic cluster runs a virtual-actor service with
+      persistent state, reminders, single-activation, automatic failover on node loss, and a typed Rust
+      client. The framework crate has no <code>unsafe</code> outside FFI shims and depends only on
+      <code>rust-lib</code>.
+    </p>
+
+    <footer>
+      Documents in this folder: <a href="index.html">Platform vision</a> ·
+      <a href="substrate-apps.html">Apps on the substrate</a> ·
+      <a href="orleans-framework.html">Apps via a framework</a> ·
+      <a href="erlang-substrate.html">Substrate roadmap</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Building applications on the substrate</title>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#161922',
+    primaryColor: '#1c2030',
+    primaryBorderColor: '#2a3045',
+    primaryTextColor: '#e6e8ee',
+    lineColor: '#7c9cff',
+    secondaryColor: '#11141c',
+    fontFamily: 'ui-monospace, Consolas, monospace'
+  }
+});
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="nav">
+    <div class="brand">Lunatic Platform</div>
+    <div class="tagline">Planning &amp; architecture docs</div>
+
+    <h4>Overview</h4>
+    <a href="index.html">Platform vision</a>
+
+    <h4>Build paths</h4>
+    <a href="substrate-apps.html" class="active">Apps on the substrate</a>
+    <a href="orleans-framework.html">Apps via a framework</a>
+
+    <h4>Roadmap</h4>
+    <a href="erlang-substrate.html">Substrate roadmap</a>
+
+    <h4>Reference</h4>
+    <a href="../CLAUDE.md">CLAUDE.md</a>
+    <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a>
+    <a href="../README.md">README.md</a>
+  </aside>
+
+  <main>
+    <h1>
+      <span class="eyebrow">Build path</span>
+      Building applications on the substrate
+    </h1>
+    <p class="lede">
+      Applications can be written directly against the substrate's primitives: processes, mailboxes,
+      links, monitors, supervisors, named registries, process groups, distribution, and persistence
+      providers. This page describes the primitive surface, the canonical patterns, and the roadmap
+      milestones that determine when this path is production-ready.
+    </p>
+
+    <h2>Primitive surface</h2>
+    <p>The primitives a substrate-direct application uses, once the roadmap is complete:</p>
+    <table>
+      <thead><tr><th>Primitive</th><th>What it provides</th></tr></thead>
+      <tbody>
+        <tr><td>Processes</td><td>Cheap, isolated, preemptively scheduled units of execution with their own stack, heap, and resource budget.</td></tr>
+        <tr><td>Mailboxes</td><td>Tagged message passing with selective receive; per-process FIFO.</td></tr>
+        <tr><td>Links</td><td>Bidirectional crash coupling between two processes.</td></tr>
+        <tr><td>Monitors</td><td>One-way liveness observation; receive a <code>DOWN</code> message when the target exits.</td></tr>
+        <tr><td>Supervisors</td><td>Restart strategies (<code>one_for_one</code>, <code>rest_for_one</code>, <code>one_for_all</code>, <code>simple_one_for_one</code>) with intensity / period throttling. Guest-side crate, not host primitive.</td></tr>
+        <tr><td>Named registry</td><td>Process names for stable addressing.</td></tr>
+        <tr><td>Process groups</td><td>Joinable groups for one-to-many delivery; pubsub and fan-out.</td></tr>
+        <tr><td>Distribution</td><td>Spawn and message across nodes; node-monitor events for membership changes.</td></tr>
+        <tr><td>Networking</td><td>TCP, UDP, TLS, outbound HTTP as host capabilities.</td></tr>
+        <tr><td>Persistence providers</td><td>Pluggable key-value-with-etag interface; SQLite default.</td></tr>
+        <tr><td>Timers</td><td>Volatile (per-process) and durable (survives restart).</td></tr>
+        <tr><td>Resource limits</td><td>Per-process memory and fuel caps; per-process WASI permission scoping.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Canonical patterns</h2>
+
+    <h3>Supervised network service</h3>
+    <p>
+      A top-level supervisor owns an acceptor process and a worker-pool supervisor. The acceptor spawns
+      a worker per connection under the pool supervisor. Worker crashes are contained by the pool
+      supervisor's restart policy; the acceptor itself is supervised by the top.
+    </p>
+    <div class="mermaid">
+flowchart TB
+  TOP["Top supervisor<br/><small>one_for_one</small>"]
+  ACC["Acceptor<br/><small>listens on :8080</small>"]
+  WSUP["Worker supervisor<br/><small>simple_one_for_one</small>"]
+  W1["Conn worker 1"]
+  W2["Conn worker 2"]
+  W3["Conn worker 3"]
+  CFG["Config agent"]
+  TOP --> ACC
+  TOP --> WSUP
+  TOP --> CFG
+  WSUP --> W1
+  WSUP --> W2
+  WSUP --> W3
+  ACC -.->|spawn link| WSUP
+  style TOP fill:#1c2030,stroke:#7c9cff
+  style ACC fill:#1c2030,stroke:#5fd49f
+  style WSUP fill:#1c2030,stroke:#5fd49f
+  style CFG fill:#1c2030,stroke:#5fd49f
+  style W1 fill:#11141c,stroke:#2a3045
+  style W2 fill:#11141c,stroke:#2a3045
+  style W3 fill:#11141c,stroke:#2a3045
+    </div>
+    <p>Applies to: HTTP servers, custom protocol daemons, brokers, anything connection-oriented.</p>
+
+    <h3>Stateful service with a state-owning process</h3>
+    <p>
+      A single process owns a piece of state and answers messages serially. Callers send requests with
+      a reply-to address and correlation tag. State is loaded from the persistence provider on start
+      and saved on change; the supervisor restarts the process on crash, which reloads from storage.
+    </p>
+
+    <h3>Pipeline of linked stages</h3>
+    <p>
+      Producer, transform stages, and sink, each a process, linked through the chain. Back-pressure is
+      expressed through bounded mailboxes or explicit demand messages from downstream. A crash in any
+      stage propagates through the links; the supervisor restarts the chain atomically.
+    </p>
+    <div class="mermaid">
+flowchart LR
+  P["Producer"] -->|messages| T1["Transform A"]
+  T1 -->|messages| T2["Transform B"]
+  T2 -->|messages| S["Sink"]
+  T1 -.->|demand| P
+  T2 -.->|demand| T1
+  S -.->|demand| T2
+  style P fill:#1c2030,stroke:#7c9cff
+  style T1 fill:#1c2030,stroke:#7c9cff
+  style T2 fill:#1c2030,stroke:#7c9cff
+  style S fill:#1c2030,stroke:#7c9cff
+    </div>
+    <p>Applies to: log processors, ETL, stream consumers, queue drains.</p>
+
+    <h3>Sandboxed execution of untrusted or fault-prone code</h3>
+    <p>
+      Spawn the target module as a child process with strict memory and fuel caps and minimal WASI
+      permissions. Communicate only by message. A crash, OOM, or fuel exhaustion is confined to that
+      process.
+    </p>
+
+    <h3>Distributed worker pool</h3>
+    <p>
+      A named registry entry per pool; workers join a process group across nodes. Submitters send work
+      to the group; routing is by dispatcher process or message hash. Node-monitor events from the
+      substrate remove workers belonging to failed nodes; the pool continues with the survivors.
+    </p>
+
+    <h2>Substrate items required for this path</h2>
+    <p>
+      Substrate-direct applications become production-ready when the following roadmap items have
+      landed. See <a href="erlang-substrate.html">Substrate roadmap</a> for the full phase plan.
+    </p>
+    <ul>
+      <li><strong>Monitors with refs</strong> — required for supervisors and orchestrators to detect crashes without dying with them.</li>
+      <li><strong>Supervision crate</strong> — restart strategies in a blessed shared library.</li>
+      <li><strong>Process groups</strong> — pubsub and fan-out as a primitive.</li>
+      <li><strong>Outbound HTTP / TLS</strong> — required to call modern databases, APIs, and telemetry.</li>
+      <li><strong>Persistence providers</strong> — required for state to survive restarts without bespoke I/O.</li>
+      <li><strong>Node-monitor events</strong> — required for any multi-node service to react to topology changes.</li>
+    </ul>
+    <p>
+      The production-ready milestone lands at the end of substrate phase 5 (supervision crate). The
+      remaining items (persistence providers, durable timers) extend what substrate-direct applications
+      can do without changing the path.
+    </p>
+
+    <footer>
+      Documents in this folder: <a href="index.html">Platform vision</a> ·
+      <a href="substrate-apps.html">Apps on the substrate</a> ·
+      <a href="orleans-framework.html">Apps via a framework</a> ·
+      <a href="erlang-substrate.html">Substrate roadmap</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
