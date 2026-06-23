@@ -24,8 +24,8 @@ use lunatic_wasi_api::{build_wasi, LunaticWasiCtx};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::{Mutex, RwLock};
-use wasmtime::{Linker, ResourceLimiter};
-use wasmtime_wasi::WasiCtx;
+use wasi_common::WasiCtx;
+use wasmtime::{Linker, ResourceLimiter, Result as WasmResult};
 
 use crate::DefaultProcessConfig;
 
@@ -221,12 +221,22 @@ impl Debug for DefaultProcessState {
 
 // Limit the maximum memory of the process depending on the environment it was spawned in.
 impl ResourceLimiter for DefaultProcessState {
-    fn memory_growing(&mut self, _current: usize, desired: usize, _maximum: Option<usize>) -> bool {
-        desired <= self.config().get_max_memory()
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> WasmResult<bool> {
+        Ok(desired <= self.config().get_max_memory())
     }
 
-    fn table_growing(&mut self, _current: u32, desired: u32, _maximum: Option<u32>) -> bool {
-        desired < 100_000
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> WasmResult<bool> {
+        Ok(desired < 100_000)
     }
 
     // Allow one instance per store
@@ -493,7 +503,7 @@ mod tests {
 
         // Create wasmtime runtime
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.async_support(true).consume_fuel(true);
+        wasmtime_config.consume_fuel(true);
         let runtime = WasmtimeRuntime::new(&wasmtime_config).unwrap();
 
         let raw_module = wat::parse_file("./wat/all_imports.wat").unwrap();

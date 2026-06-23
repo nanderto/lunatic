@@ -1,6 +1,5 @@
-use anyhow::{anyhow, Context, Result};
 use std::{fmt::Display, future::Future, io::Write, pin::Pin};
-use wasmtime::{Caller, Memory, Val};
+use wasmtime::{Caller, Error, Memory, Result, Val};
 
 const ALLOCATOR_FUNCTION_NAME: &str = "lunatic_alloc";
 const FREEING_FUNCTION_NAME: &str = "lunatic_free";
@@ -69,7 +68,7 @@ pub async fn write_to_guest_vec<T: Send>(
     let (memory_slice, _) = memory.data_and_store_mut(&mut (*caller));
     let mut alloc_vec = memory_slice
         .get_mut(alloc_ptr as usize..(alloc_ptr as usize + alloc_len))
-        .context("allocated memory does not exist")?;
+        .ok_or_else(|| Error::msg("allocated memory does not exist"))?;
 
     alloc_vec.write_all(data)?;
 
@@ -82,15 +81,14 @@ pub trait IntoTrap<T> {
     fn or_trap<S: Display>(self, info: S) -> Result<T>;
 }
 
-impl<T, E: Display> IntoTrap<T> for Result<T, E> {
+impl<T, E: Display> IntoTrap<T> for std::result::Result<T, E> {
     fn or_trap<S: Display>(self, info: S) -> Result<T> {
         match self {
             Ok(result) => Ok(result),
-            Err(error) => Err(anyhow!(
+            Err(error) => Err(Error::msg(format!(
                 "Trap raised during host call: {} ({}).",
-                error,
-                info
-            )),
+                error, info
+            ))),
         }
     }
 }
@@ -99,11 +97,11 @@ impl<T> IntoTrap<T> for Option<T> {
     fn or_trap<S: Display>(self, info: S) -> Result<T> {
         match self {
             Some(result) => Ok(result),
-            None => Err(anyhow!(
+            None => Err(Error::msg(format!(
                 "Trap raised during host call: Expected `Some({})` got `None` ({}).",
                 std::any::type_name::<T>(),
                 info
-            )),
+            ))),
         }
     }
 }

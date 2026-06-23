@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use std::vec::IntoIter;
 
-use anyhow::Result;
 use tokio::time::timeout;
+use wasmtime::Result;
 use wasmtime::{Caller, Linker};
 
 use lunatic_common_api::{get_memory, IntoTrap};
@@ -34,7 +34,20 @@ impl Iterator for DnsIterator {
 pub fn register<T: NetworkingCtx + ErrorCtx + Send + 'static>(
     linker: &mut Linker<T>,
 ) -> Result<()> {
-    linker.func_wrap4_async("lunatic::networking", "resolve", resolve)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "resolve",
+        |caller,
+         (name_str_ptr, name_str_len, timeout_duration, id_u64_ptr): (u32, u32, u64, u32)| {
+            resolve(
+                caller,
+                name_str_ptr,
+                name_str_len,
+                timeout_duration,
+                id_u64_ptr,
+            )
+        },
+    )?;
     linker.func_wrap(
         "lunatic::networking",
         "drop_dns_iterator",

@@ -1,12 +1,15 @@
 use std::future::Future;
 
-use anyhow::Result;
 use lunatic_common_api::IntoTrap;
-use wasmtime::{Caller, Linker, Val};
+use wasmtime::{Caller, Linker, Result, Val};
 
 // Register the trap APIs to the linker
 pub fn register<T: Send + 'static>(linker: &mut Linker<T>) -> Result<()> {
-    linker.func_wrap2_async("lunatic::trap", "catch", catch_trap::<T>)?;
+    linker.func_wrap_async(
+        "lunatic::trap",
+        "catch",
+        |caller: Caller<T>, (function, pointer): (i32, i32)| catch_trap(caller, function, pointer),
+    )?;
     Ok(())
 }
 
@@ -26,7 +29,7 @@ pub fn register<T: Send + 'static>(linker: &mut Linker<T>) -> Result<()> {
 //
 // Traps:
 // * If export `_lunatic_catch_trap` doesn't exist or is not a function.
-fn catch_trap<T: Send>(
+fn catch_trap<T: Send + 'static>(
     mut caller: Caller<T>,
     function: i32,
     pointer: i32,
@@ -44,7 +47,7 @@ fn catch_trap<T: Send>(
             .call_async(caller, &params, &mut result)
             .await;
         match execution_result {
-            Ok(()) => Ok(result.get(0).unwrap().i32().unwrap()),
+            Ok(()) => Ok(result.first().unwrap().i32().unwrap()),
             Err(_) => Ok(0),
         }
     })

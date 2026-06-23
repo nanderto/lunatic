@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use wasi_common::I32Exit;
 use wasmtime::ResourceLimiter;
 
 use crate::{
@@ -25,7 +26,7 @@ impl WasmtimeRuntime {
     /// Compiles a wasm module to machine code and performs type-checking on host functions.
     pub fn compile_module<T>(&self, data: RawWasm) -> Result<WasmtimeCompiledModule<T>>
     where
-        T: ProcessState,
+        T: ProcessState + 'static,
     {
         let module = wasmtime::Module::new(&self.engine, data.as_slice())?;
         let mut linker = wasmtime::Linker::new(&self.engine);
@@ -42,22 +43,15 @@ impl WasmtimeRuntime {
         state: T,
     ) -> Result<WasmtimeInstance<T>>
     where
-        T: ProcessState + Send + ResourceLimiter,
+        T: ProcessState + Send + ResourceLimiter + 'static,
     {
         let max_fuel = state.config().get_max_fuel();
         let mut store = wasmtime::Store::new(&self.engine, state);
         // Set limits of the store
         store.limiter(|state| state);
-        // Trap if out of fuel
-        store.out_of_fuel_trap();
-        // Define maximum fuel
-        match max_fuel {
-            Some(max_fuel) => {
-                store.out_of_fuel_async_yield(max_fuel, UNIT_OF_COMPUTE_IN_INSTRUCTIONS)
-            }
-            // If no limit is specified use maximum
-            None => store.out_of_fuel_async_yield(u64::MAX, UNIT_OF_COMPUTE_IN_INSTRUCTIONS),
-        };
+        // Define maximum fuel and async yield interval
+        store.set_fuel(max_fuel.unwrap_or(u64::MAX))?;
+        store.fuel_async_yield_interval(Some(UNIT_OF_COMPUTE_IN_INSTRUCTIONS))?;
         // Create instance
         let instance = compiled_module
             .instantiator()
@@ -116,7 +110,7 @@ impl<T> Clone for WasmtimeCompiledModule<T> {
 
 pub struct WasmtimeInstance<T>
 where
-    T: Send,
+    T: Send + 'static,
 {
     store: wasmtime::Store<T>,
     instance: wasmtime::Instance,
@@ -124,7 +118,7 @@ where
 
 impl<T> WasmtimeInstance<T>
 where
-    T: Send,
+    T: Send + 'static,
 {
     pub async fn call(mut self, function: &str, params: Vec<wasmtime::Val>) -> ExecutionResult<T> {
         let entry = self.instance.get_func(&mut self.store, function);
@@ -147,8 +141,8 @@ where
                 Ok(()) => ResultValue::Ok,
                 Err(err) => {
                     // If the trap is a result of calling `proc_exit(0)`, treat it as an no-error finish.
-                    match err.downcast_ref::<wasmtime_wasi::I32Exit>() {
-                        Some(wasmtime_wasi::I32Exit(0)) => ResultValue::Ok,
+                    match err.downcast_ref::<I32Exit>() {
+                        Some(I32Exit(0)) => ResultValue::Ok,
                         _ => ResultValue::Failed(err.to_string()),
                     }
                 }
@@ -160,7 +154,6 @@ where
 pub fn default_config() -> wasmtime::Config {
     let mut config = wasmtime::Config::new();
     config
-        .async_support(true)
         .debug_info(false)
         // The behavior of fuel running out is defined on the Store
         .consume_fuel(true)
@@ -171,7 +164,7 @@ pub fn default_config() -> wasmtime::Config {
         .cranelift_opt_level(wasmtime::OptLevel::SpeedAndSize)
         // Allocate resources on demand because we can't predict how many process will exist
         .allocation_strategy(wasmtime::InstanceAllocationStrategy::OnDemand)
-        // Always use static memories
-        .static_memory_forced(true);
+        // Disable memory relocation (equivalent to static_memory_forced in older wasmtime)
+        .memory_may_move(false);
     config
 }

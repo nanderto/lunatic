@@ -1,7 +1,6 @@
-use anyhow::Result;
 use lunatic_common_api::{get_memory, IntoTrap};
 use metrics::{counter, decrement_gauge, gauge, histogram, increment_counter, increment_gauge};
-use wasmtime::{Caller, Linker};
+use wasmtime::{Caller, Linker, Result};
 
 /// Links the [Metrics](https://crates.io/crates/metrics) APIs
 pub fn register<T: 'static>(linker: &mut Linker<T>) -> anyhow::Result<()> {

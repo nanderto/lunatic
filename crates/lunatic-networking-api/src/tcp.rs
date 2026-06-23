@@ -4,12 +4,12 @@ use std::io::IoSlice;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use tokio::time::timeout;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+use wasmtime::Result;
 use wasmtime::{Caller, Linker};
 
 use lunatic_common_api::{get_memory, IntoTrap};
@@ -22,40 +22,132 @@ use crate::{socket_address, NetworkingCtx, TcpConnection};
 pub fn register<T: NetworkingCtx + ErrorCtx + Send + 'static>(
     linker: &mut Linker<T>,
 ) -> Result<()> {
-    linker.func_wrap6_async("lunatic::networking", "tcp_bind", tcp_bind)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_bind",
+        |caller,
+         (addr_type, addr_u8_ptr, port, flow_info, scope_id, id_u64_ptr): (
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+        )| {
+            tcp_bind(
+                caller,
+                addr_type,
+                addr_u8_ptr,
+                port,
+                flow_info,
+                scope_id,
+                id_u64_ptr,
+            )
+        },
+    )?;
     linker.func_wrap(
         "lunatic::networking",
         "drop_tcp_listener",
         drop_tcp_listener,
     )?;
     linker.func_wrap("lunatic::networking", "tcp_local_addr", tcp_local_addr)?;
-    linker.func_wrap3_async("lunatic::networking", "tcp_accept", tcp_accept)?;
-    linker.func_wrap7_async("lunatic::networking", "tcp_connect", tcp_connect)?;
-    linker.func_wrap2_async("lunatic::networking", "tcp_peer_addr", tcp_peer_addr)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_accept",
+        |caller, (listener_id, id_u64_ptr, socket_addr_id_ptr): (u64, u32, u32)| {
+            tcp_accept(caller, listener_id, id_u64_ptr, socket_addr_id_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_connect",
+        |caller,
+         (addr_type, addr_u8_ptr, port, flow_info, scope_id, timeout_duration, id_u64_ptr): (
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u64,
+            u32,
+        )| {
+            tcp_connect(
+                caller,
+                addr_type,
+                addr_u8_ptr,
+                port,
+                flow_info,
+                scope_id,
+                timeout_duration,
+                id_u64_ptr,
+            )
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_peer_addr",
+        |caller, (tcp_stream_id, id_u64_ptr): (u64, u32)| {
+            tcp_peer_addr(caller, tcp_stream_id, id_u64_ptr)
+        },
+    )?;
     linker.func_wrap("lunatic::networking", "drop_tcp_stream", drop_tcp_stream)?;
     linker.func_wrap("lunatic::networking", "clone_tcp_stream", clone_tcp_stream)?;
-    linker.func_wrap4_async(
+    linker.func_wrap_async(
         "lunatic::networking",
         "tcp_write_vectored",
-        tcp_write_vectored,
+        |caller, (stream_id, ciovec_array_ptr, ciovec_array_len, opaque_ptr): (u64, u32, u32, u32)| {
+            tcp_write_vectored(caller, stream_id, ciovec_array_ptr, ciovec_array_len, opaque_ptr)
+        },
     )?;
-    linker.func_wrap4_async("lunatic::networking", "tcp_peek", tcp_peek)?;
-    linker.func_wrap4_async("lunatic::networking", "tcp_read", tcp_read)?;
-    linker.func_wrap2_async("lunatic::networking", "set_read_timeout", set_read_timeout)?;
-    linker.func_wrap2_async(
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_peek",
+        |caller, (stream_id, buffer_ptr, buffer_len, opaque_ptr): (u64, u32, u32, u32)| {
+            tcp_peek(caller, stream_id, buffer_ptr, buffer_len, opaque_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_read",
+        |caller, (stream_id, buffer_ptr, buffer_len, opaque_ptr): (u64, u32, u32, u32)| {
+            tcp_read(caller, stream_id, buffer_ptr, buffer_len, opaque_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "set_read_timeout",
+        |caller, (stream_id, duration): (u64, u64)| set_read_timeout(caller, stream_id, duration),
+    )?;
+    linker.func_wrap_async(
         "lunatic::networking",
         "set_write_timeout",
-        set_write_timeout,
+        |caller, (stream_id, duration): (u64, u64)| set_write_timeout(caller, stream_id, duration),
     )?;
-    linker.func_wrap2_async("lunatic::networking", "set_peek_timeout", set_peek_timeout)?;
-    linker.func_wrap1_async("lunatic::networking", "get_read_timeout", get_read_timeout)?;
-    linker.func_wrap1_async(
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "set_peek_timeout",
+        |caller, (stream_id, duration): (u64, u64)| set_peek_timeout(caller, stream_id, duration),
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "get_read_timeout",
+        |caller, (stream_id,): (u64,)| get_read_timeout(caller, stream_id),
+    )?;
+    linker.func_wrap_async(
         "lunatic::networking",
         "get_write_timeout",
-        get_write_timeout,
+        |caller, (stream_id,): (u64,)| get_write_timeout(caller, stream_id),
     )?;
-    linker.func_wrap1_async("lunatic::networking", "get_peek_timeout", get_peek_timeout)?;
-    linker.func_wrap2_async("lunatic::networking", "tcp_flush", tcp_flush)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "get_peek_timeout",
+        |caller, (stream_id,): (u64,)| get_peek_timeout(caller, stream_id),
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tcp_flush",
+        |caller, (stream_id, error_id_ptr): (u64, u32)| tcp_flush(caller, stream_id, error_id_ptr),
+    )?;
     Ok(())
 }
 

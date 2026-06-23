@@ -30,5 +30,5 @@ tokio = { workspace = true, features = [
   "sync",
   "net",
 ] }
+wasi-common = { workspace = true }
 wasmtime = { workspace = true }
-wasmtime-wasi = { workspace = true }

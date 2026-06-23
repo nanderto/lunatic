@@ -1,7 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
-use anyhow::Result;
-#[cfg(not(target_arch = "wasm32"))]
 use lunatic_common_api::IntoTrap;
+#[cfg(not(target_arch = "wasm32"))]
+use wasmtime::Result;
 
 #[cfg(not(target_arch = "wasm32"))]
 use sqlite::Statement;

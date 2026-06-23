@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Result};
 use hash_map_id::HashMapId;
 use lunatic_common_api::{get_memory, IntoTrap};
 use lunatic_distributed::DistributedCtx;
@@ -22,7 +21,8 @@ use lunatic_process::{
     DeathReason, Process, Signal, WasmProcess,
 };
 use lunatic_wasi_api::LunaticWasiCtx;
-use wasmtime::{Caller, Linker, ResourceLimiter, Val};
+use wasmtime::Result;
+use wasmtime::{Caller, Error, Linker, ResourceLimiter, Val};
 
 pub type ProcessResources = HashMapId<Arc<dyn Process>>;
 pub type ModuleResources<S> = HashMapId<Arc<WasmtimeCompiledModule<S>>>;
@@ -169,9 +169,71 @@ where
         config_set_can_spawn_processes,
     )?;
 
-    linker.func_wrap8_async("lunatic::process", "spawn", spawn)?;
-    linker.func_wrap11_async("lunatic::process", "get_or_spawn", get_or_spawn)?;
-    linker.func_wrap1_async("lunatic::process", "sleep_ms", sleep_ms)?;
+    linker.func_wrap_async(
+        "lunatic::process",
+        "spawn",
+        |caller,
+         (
+            link,
+            config_id,
+            module_id,
+            func_str_ptr,
+            func_str_len,
+            params_ptr,
+            params_len,
+            id_ptr,
+        ): (i64, i64, i64, u32, u32, u32, u32, u32)| {
+            spawn(
+                caller,
+                link,
+                config_id,
+                module_id,
+                func_str_ptr,
+                func_str_len,
+                params_ptr,
+                params_len,
+                id_ptr,
+            )
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::process",
+        "get_or_spawn",
+        |caller,
+         (
+            name_str_ptr,
+            name_str_len,
+            link,
+            config_id,
+            module_id,
+            func_str_ptr,
+            func_str_len,
+            params_ptr,
+            params_len,
+            node_id_ptr,
+            id_ptr,
+        ): (u32, u32, i64, i64, i64, u32, u32, u32, u32, u32, u32)| {
+            get_or_spawn(
+                caller,
+                name_str_ptr,
+                name_str_len,
+                link,
+                config_id,
+                module_id,
+                func_str_ptr,
+                func_str_len,
+                params_ptr,
+                params_len,
+                node_id_ptr,
+                id_ptr,
+            )
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::process",
+        "sleep_ms",
+        |caller, (millis,): (u64,)| sleep_ms(caller, millis),
+    )?;
     linker.func_wrap("lunatic::process", "die_when_link_dies", die_when_link_dies)?;
 
     linker.func_wrap("lunatic::process", "process_id", process_id)?;
@@ -561,8 +623,8 @@ where
 {
     Box::new(async move {
         if !caller.data().config().can_spawn_processes() {
-            return Err(anyhow!(
-                "Process doesn't have permissions to spawn sub-processes"
+            return Err(Error::msg(
+                "Process doesn't have permissions to spawn sub-processes",
             ));
         }
 
@@ -574,7 +636,9 @@ where
         let state = caller.data();
 
         if !state.is_initialized() {
-            return Err(anyhow!("Cannot spawn process during module initialization"));
+            return Err(Error::msg(
+                "Cannot spawn process during module initialization",
+            ));
         }
 
         let config = match config_id {
@@ -599,7 +663,9 @@ where
                 .clone(),
         };
 
-        let mut new_state = state.new_state(module.clone(), config)?;
+        let mut new_state = state
+            .new_state(module.clone(), config)
+            .map_err(|e| Error::msg(e.to_string()))?;
 
         let memory = get_memory(&mut caller)?;
         let func_str = memory
@@ -618,17 +684,17 @@ where
                 let result = match chunk[0] {
                     0x7F => Val::I32(value as i32),
                     0x7E => Val::I64(value as i64),
-                    0x7B => Val::V128(value),
-                    _ => return Err(anyhow!("Unsupported type ID")),
+                    0x7B => Val::V128(value.into()),
+                    _ => return Err(Error::msg("Unsupported type ID")),
                 };
                 Ok(result)
             })
             .collect::<Result<Vec<_>>>()?;
         if !params_chunks.remainder().is_empty() {
-            return Err(anyhow!(
+            return Err(Error::msg(format!(
                 "Params array must be in chunks of 17 bytes, but {} bytes remained",
                 params_chunks.remainder().len()
-            ));
+            )));
         }
         // Should processes be linked together?
         let link: Option<(Option<i64>, Arc<dyn Process>)> = match link {
@@ -764,8 +830,8 @@ where
             // Spawn a new process. This is copy of the code in `spawn` because host functions can't call
             // each other.
             if !state.config().can_spawn_processes() {
-                return Err(anyhow!(
-                    "lunatic::process:get_or_spawn: Process doesn't have permissions to spawn sub-processes"
+                return Err(Error::msg(
+                    "lunatic::process:get_or_spawn: Process doesn't have permissions to spawn sub-processes",
                 ));
             }
 
@@ -775,9 +841,9 @@ where
                 .or_trap("lunatic::process:get_or_spawn: Process spawn limit reached.")?;
 
             if !state.is_initialized() {
-                return Err(
-                    anyhow!("lunatic::process:get_or_spawn: Cannot spawn process during module initialization")
-                );
+                return Err(Error::msg(
+                    "lunatic::process:get_or_spawn: Cannot spawn process during module initialization",
+                ));
             }
 
             let config = match config_id {
@@ -800,7 +866,9 @@ where
                     .clone(),
             };
 
-            let mut new_state = state.new_state(module.clone(), config)?;
+            let mut new_state = state
+                .new_state(module.clone(), config)
+                .map_err(|e| Error::msg(e.to_string()))?;
 
             let func_str = memory_slice
                 .get(func_str_ptr as usize..(func_str_ptr + func_str_len) as usize)
@@ -817,17 +885,17 @@ where
                     let result = match chunk[0] {
                         0x7F => Val::I32(value as i32),
                         0x7E => Val::I64(value as i64),
-                        0x7B => Val::V128(value),
-                        _ => return Err(anyhow!("Unsupported type ID")),
+                        0x7B => Val::V128(value.into()),
+                        _ => return Err(Error::msg("Unsupported type ID")),
                     };
                     Ok(result)
                 })
                 .collect::<Result<Vec<_>>>()?;
             if !params_chunks.remainder().is_empty() {
-                return Err(anyhow!(
+                return Err(Error::msg(format!(
                     "Params array must be in chunks of 17 bytes, but {} bytes remained",
                     params_chunks.remainder().len()
-                ));
+                )));
             }
             // Should processes be linked together?
             let link: Option<(Option<i64>, Arc<dyn Process>)> = match link {
