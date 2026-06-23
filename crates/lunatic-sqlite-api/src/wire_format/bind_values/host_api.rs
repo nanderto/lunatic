@@ -1,6 +1,6 @@
-use anyhow::Result;
 use lunatic_common_api::IntoTrap;
 use sqlite::Statement;
+use wasmtime::Result;
 
 use super::{BindKey, BindPair, BindValue, SqliteError};
 

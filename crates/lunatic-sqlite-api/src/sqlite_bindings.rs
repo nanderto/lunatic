@@ -1,4 +1,3 @@
-use anyhow::Result;
 use hash_map_id::HashMapId;
 use lunatic_common_api::{get_memory, write_to_guest_vec, IntoTrap};
 use lunatic_error_api::ErrorCtx;
@@ -12,6 +11,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use wasmtime::{Caller, Linker, ResourceLimiter};
+use wasmtime::{Error, Result};
 
 use crate::wire_format::{BindList, SqliteError, SqliteRow, SqliteValue};
 
@@ -48,14 +48,40 @@ where
     linker.func_wrap("lunatic::sqlite", "bind_value", bind_value)?;
     linker.func_wrap("lunatic::sqlite", "sqlite3_changes", sqlite3_changes)?;
     linker.func_wrap("lunatic::sqlite", "statement_reset", statement_reset)?;
-    linker.func_wrap2_async("lunatic::sqlite", "last_error", last_error)?;
+    linker.func_wrap_async(
+        "lunatic::sqlite",
+        "last_error",
+        |caller, (conn_id, opaque_ptr): (u64, u32)| last_error(caller, conn_id, opaque_ptr),
+    )?;
     linker.func_wrap("lunatic::sqlite", "sqlite3_finalize", sqlite3_finalize)?;
     linker.func_wrap("lunatic::sqlite", "sqlite3_step", sqlite3_step)?;
-    linker.func_wrap3_async("lunatic::sqlite", "read_column", read_column)?;
-    linker.func_wrap2_async("lunatic::sqlite", "column_names", column_names)?;
-    linker.func_wrap2_async("lunatic::sqlite", "read_row", read_row)?;
+    linker.func_wrap_async(
+        "lunatic::sqlite",
+        "read_column",
+        |caller, (statement_id, col_idx, opaque_ptr): (u64, u32, u32)| {
+            read_column(caller, statement_id, col_idx, opaque_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::sqlite",
+        "column_names",
+        |caller, (statement_id, opaque_ptr): (u64, u32)| {
+            column_names(caller, statement_id, opaque_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::sqlite",
+        "read_row",
+        |caller, (statement_id, opaque_ptr): (u64, u32)| read_row(caller, statement_id, opaque_ptr),
+    )?;
     linker.func_wrap("lunatic::sqlite", "column_count", column_count)?;
-    linker.func_wrap3_async("lunatic::sqlite", "column_name", column_name)?;
+    linker.func_wrap_async(
+        "lunatic::sqlite",
+        "column_name",
+        |caller, (statement_id, column_idx, opaque_ptr): (u64, u32, u32)| {
+            column_name(caller, statement_id, column_idx, opaque_ptr)
+        },
+    )?;
     Ok(())
 }
 
@@ -164,7 +190,6 @@ fn query_prepare<T: ProcessState + ErrorCtx + SQLiteCtx>(
         let conn = state
             .sqlite_connections()
             .get(conn_id)
-            .take()
             .or_trap("lunatic::sqlite::query_prepare::obtain_conn")?
             .lock()
             .or_trap("lunatic::sqlite::query_prepare::obtain_conn")?;
@@ -267,8 +292,11 @@ fn read_column<T: ProcessState + ErrorCtx + SQLiteCtx + Send + Sync>(
         let (_, state) = memory.data_and_store_mut(&mut caller);
         let (_, stmt) = get_statement!(state, statement_id);
 
-        let column = bincode::serialize(&SqliteValue::read_column(stmt, col_idx as usize)?)
-            .or_trap("lunatic::sqlite::read_column")?;
+        let column = bincode::serialize(
+            &SqliteValue::read_column(stmt, col_idx as usize)
+                .map_err(|e| Error::msg(e.to_string()))?,
+        )
+        .or_trap("lunatic::sqlite::read_column")?;
 
         write_to_guest_vec(&mut caller, &memory, &column, opaque_ptr).await
     })
@@ -307,7 +335,7 @@ fn read_row<T: ProcessState + ErrorCtx + SQLiteCtx + Send + Sync>(
         let (_, state) = memory.data_and_store_mut(&mut caller);
         let (_, stmt) = get_statement!(state, statement_id);
 
-        let read_row = SqliteRow::read_row(stmt)?;
+        let read_row = SqliteRow::read_row(stmt).map_err(|e| Error::msg(e.to_string()))?;
 
         let row = bincode::serialize(&read_row).or_trap("lunatic::sqlite::read_row")?;
 

@@ -4,12 +4,12 @@ use std::io::{self, IoSlice};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use tokio::time::timeout;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+use wasmtime::Result;
 use wasmtime::{Caller, Linker};
 
 use lunatic_common_api::{get_memory, IntoTrap};
@@ -25,44 +25,120 @@ use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 pub fn register<T: NetworkingCtx + ErrorCtx + Send + 'static>(
     linker: &mut Linker<T>,
 ) -> Result<()> {
-    linker.func_wrap10_async("lunatic::networking", "tls_bind", tls_bind)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tls_bind",
+        |caller,
+         (
+            addr_type,
+            addr_u8_ptr,
+            port,
+            flow_info,
+            scope_id,
+            id_u64_ptr,
+            certs_array_ptr,
+            certs_array_len,
+            keys_array_ptr,
+            keys_array_len,
+        ): (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32)| {
+            tls_bind(
+                caller,
+                addr_type,
+                addr_u8_ptr,
+                port,
+                flow_info,
+                scope_id,
+                id_u64_ptr,
+                certs_array_ptr,
+                certs_array_len,
+                keys_array_ptr,
+                keys_array_len,
+            )
+        },
+    )?;
     linker.func_wrap(
         "lunatic::networking",
         "drop_tls_listener",
         drop_tls_listener,
     )?;
     linker.func_wrap("lunatic::networking", "tls_local_addr", tls_local_addr)?;
-    linker.func_wrap3_async("lunatic::networking", "tls_accept", tls_accept)?;
-    linker.func_wrap7_async("lunatic::networking", "tls_connect", tls_connect)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tls_accept",
+        |caller, (listener_id, id_u64_ptr, socket_addr_id_ptr): (u64, u32, u32)| {
+            tls_accept(caller, listener_id, id_u64_ptr, socket_addr_id_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tls_connect",
+        |caller,
+         (
+            addr_str_ptr,
+            addr_str_len,
+            port,
+            timeout_duration,
+            id_u64_ptr,
+            certs_array_ptr,
+            certs_array_len,
+        ): (u32, u32, u32, u64, u32, u32, u32)| {
+            tls_connect(
+                caller,
+                addr_str_ptr,
+                addr_str_len,
+                port,
+                timeout_duration,
+                id_u64_ptr,
+                certs_array_ptr,
+                certs_array_len,
+            )
+        },
+    )?;
     linker.func_wrap("lunatic::networking", "drop_tls_stream", drop_tls_stream)?;
     linker.func_wrap("lunatic::networking", "clone_tls_stream", clone_tls_stream)?;
-    linker.func_wrap4_async(
+    linker.func_wrap_async(
         "lunatic::networking",
         "tls_write_vectored",
-        tls_write_vectored,
+        |caller, (stream_id, ciovec_array_ptr, ciovec_array_len, opaque_ptr): (u64, u32, u32, u32)| {
+            tls_write_vectored(caller, stream_id, ciovec_array_ptr, ciovec_array_len, opaque_ptr)
+        },
     )?;
-    linker.func_wrap4_async("lunatic::networking", "tls_read", tls_read)?;
-    linker.func_wrap2_async(
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tls_read",
+        |caller, (stream_id, buffer_ptr, buffer_len, opaque_ptr): (u64, u32, u32, u32)| {
+            tls_read(caller, stream_id, buffer_ptr, buffer_len, opaque_ptr)
+        },
+    )?;
+    linker.func_wrap_async(
         "lunatic::networking",
         "set_tls_read_timeout",
-        set_tls_read_timeout,
+        |caller, (stream_id, duration): (u64, u64)| {
+            set_tls_read_timeout(caller, stream_id, duration)
+        },
     )?;
-    linker.func_wrap2_async(
+    linker.func_wrap_async(
         "lunatic::networking",
         "set_tls_write_timeout",
-        set_tls_write_timeout,
+        |caller, (stream_id, duration): (u64, u64)| {
+            set_tls_write_timeout(caller, stream_id, duration)
+        },
     )?;
-    linker.func_wrap1_async(
+    linker.func_wrap_async(
         "lunatic::networking",
         "get_tls_read_timeout",
-        get_tls_read_timeout,
+        |caller, (stream_id,): (u64,)| get_tls_read_timeout(caller, stream_id),
     )?;
-    linker.func_wrap1_async(
+    linker.func_wrap_async(
         "lunatic::networking",
         "get_tls_write_timeout",
-        get_tls_write_timeout,
+        |caller, (stream_id,): (u64,)| get_tls_write_timeout(caller, stream_id),
     )?;
-    linker.func_wrap2_async("lunatic::networking", "tls_flush", tls_flush)?;
+    linker.func_wrap_async(
+        "lunatic::networking",
+        "tls_flush",
+        |caller, (stream_id, error_id_ptr): (u64, u32)| tls_flush(caller, stream_id, error_id_ptr),
+    )?;
     Ok(())
 }
 
@@ -281,10 +357,7 @@ fn load_private_key(file: &[u8]) -> io::Result<rustls::PrivateKey> {
     // Load and return a single private key.
     let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)?;
     if keys.len() != 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "expected a single private key",
-        ));
+        return Err(io::Error::other("expected a single private key"));
     }
 
     Ok(rustls::PrivateKey(keys[0].clone()))
@@ -294,10 +367,7 @@ fn load_certs(file: &[u8]) -> io::Result<rustls::Certificate> {
     let mut reader = io::BufReader::new(file);
     let certs = rustls_pemfile::certs(&mut reader)?;
     if certs.len() != 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "expected a single private key",
-        ));
+        return Err(io::Error::other("expected a single private key"));
     }
 
     Ok(rustls::Certificate(certs[0].clone()))

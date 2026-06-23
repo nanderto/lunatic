@@ -1,6 +1,5 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
 use asn1_rs::ToDer;
 use lunatic_common_api::{get_memory, write_to_guest_vec, IntoTrap};
 use lunatic_distributed::{
@@ -19,7 +18,8 @@ use lunatic_process::{
 use lunatic_process_api::ProcessCtx;
 use rcgen::{Certificate, CertificateParams, CertificateSigningRequest, CustomExtension, KeyPair};
 use tokio::time::timeout;
-use wasmtime::{Caller, Linker, ResourceLimiter};
+use wasmtime::Result;
+use wasmtime::{Caller, Error, Linker, ResourceLimiter};
 
 // Register the lunatic distributed APIs to the linker
 pub fn register<T, E>(linker: &mut Linker<T>) -> Result<()>
@@ -32,30 +32,122 @@ where
     linker.func_wrap("lunatic::distributed", "get_nodes", get_nodes)?;
     linker.func_wrap("lunatic::distributed", "node_id", node_id)?;
     linker.func_wrap("lunatic::distributed", "module_id", module_id)?;
-    linker.func_wrap8_async("lunatic::distributed", "spawn", spawn)?;
-    linker.func_wrap2_async("lunatic::distributed", "send", send)?;
-    linker.func_wrap4_async(
+    linker.func_wrap_async(
+        "lunatic::distributed",
+        "spawn",
+        |caller,
+         (
+            node_id,
+            config_id,
+            module_id,
+            func_str_ptr,
+            func_str_len,
+            params_ptr,
+            params_len,
+            id_ptr,
+        ): (u64, i64, u64, u32, u32, u32, u32, u32)| {
+            spawn(
+                caller,
+                node_id,
+                config_id,
+                module_id,
+                func_str_ptr,
+                func_str_len,
+                params_ptr,
+                params_len,
+                id_ptr,
+            )
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::distributed",
+        "send",
+        |caller, (node_id, process_id): (u64, u64)| send(caller, node_id, process_id),
+    )?;
+    linker.func_wrap_async(
         "lunatic::distributed",
         "send_receive_skip_search",
-        send_receive_skip_search,
+        |caller, (node_id, process_id, wait_on_tag, timeout_duration): (u64, u64, i64, u64)| {
+            send_receive_skip_search(caller, node_id, process_id, wait_on_tag, timeout_duration)
+        },
     )?;
-    linker.func_wrap5_async(
+    linker.func_wrap_async(
         "lunatic::distributed",
         "exec_lookup_nodes",
-        exec_lookup_nodes,
+        |caller,
+         (query_ptr, query_len, query_id_ptr, nodes_len_ptr, error_ptr): (
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+        )| {
+            exec_lookup_nodes(
+                caller,
+                query_ptr,
+                query_len,
+                query_id_ptr,
+                nodes_len_ptr,
+                error_ptr,
+            )
+        },
     )?;
     linker.func_wrap(
         "lunatic::distributed",
         "copy_lookup_nodes_results",
         copy_lookup_nodes_results,
     )?;
-    linker.func_wrap1_async("lunatic::distributed", "test_root_cert", test_root_cert)?;
-    linker.func_wrap5_async(
+    linker.func_wrap_async(
+        "lunatic::distributed",
+        "test_root_cert",
+        |caller, (len_ptr,): (u32,)| test_root_cert(caller, len_ptr),
+    )?;
+    linker.func_wrap_async(
         "lunatic::distributed",
         "default_server_certificates",
-        default_server_certificates,
+        |caller,
+         (cert_pem_ptr, cert_pem_len, pk_pem_ptr, pk_pem_len, len_ptr): (
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+        )| {
+            default_server_certificates(
+                caller,
+                cert_pem_ptr,
+                cert_pem_len,
+                pk_pem_ptr,
+                pk_pem_len,
+                len_ptr,
+            )
+        },
     )?;
-    linker.func_wrap7_async("lunatic::distributed", "sign_node", sign_node)?;
+    linker.func_wrap_async(
+        "lunatic::distributed",
+        "sign_node",
+        |caller,
+         (
+            cert_pem_ptr,
+            cert_pem_len,
+            pk_pem_ptr,
+            pk_pem_len,
+            csr_pem_ptr,
+            csr_pem_len,
+            len_ptr,
+        ): (u32, u32, u32, u32, u32, u32, u32)| {
+            sign_node(
+                caller,
+                cert_pem_ptr,
+                cert_pem_len,
+                pk_pem_ptr,
+                pk_pem_len,
+                csr_pem_ptr,
+                csr_pem_len,
+                len_ptr,
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -127,7 +219,10 @@ where
             .or_trap("lunatic::distributed::lookup_nodes::query_ptr")?;
         let query = std::str::from_utf8(query_str)
             .or_trap("lunatic::distributed::lookup_nodes::query_str_utf8")?;
-        let distributed = caller.data().distributed()?;
+        let distributed = caller
+            .data()
+            .distributed()
+            .map_err(|e| Error::msg(e.to_string()))?;
         match distributed.control.lookup_nodes(query).await {
             Ok((query_id, nodes_len)) => {
                 memory
@@ -172,6 +267,7 @@ where
     if let Some(query_results) = caller
         .data()
         .distributed()
+        .map_err(|e| Error::msg(e.to_string()))
         .map(|d| d.control.query_result(&query_id))?
     {
         let nodes = query_results.1;
@@ -187,7 +283,7 @@ where
             .copy_from_slice(unsafe { nodes[..copy_nodes_len].align_to::<u8>().1 });
         Ok(copy_nodes_len as i32)
     } else {
-        let error = anyhow!("Invalid query id");
+        let error = anyhow::Error::msg("Invalid query id");
         let error_id = caller.data_mut().error_resources_mut().add(error);
         memory
             .write(&mut caller, error_ptr as usize, &error_id.to_le_bytes())
@@ -262,7 +358,8 @@ where
             .or_trap("lunatic::distributed::default_server_certificates")?;
 
         let (ctrl_cert, ctrl_pk) =
-            lunatic_distributed::control::cert::default_server_certificates(&root_cert)?;
+            lunatic_distributed::control::cert::default_server_certificates(&root_cert)
+                .map_err(|e| Error::msg(e.to_string()))?;
 
         let data = bincode::serialize(&(ctrl_cert, ctrl_pk))
             .or_trap("lunatic::distributed::default_server_certificates")?;
@@ -391,8 +488,8 @@ where
 {
     Box::new(async move {
         if !caller.data().can_spawn() {
-            return Err(anyhow!(
-                "Process doesn't have permissions to spawn sub-processes"
+            return Err(Error::msg(
+                "Process doesn't have permissions to spawn sub-processes",
             ));
         }
         let memory = get_memory(&mut caller)?;
@@ -411,12 +508,16 @@ where
         let params = params
             .chunks_exact(17)
             .map(|chunk| {
-                let value = u128::from_le_bytes(chunk[1..].try_into()?);
+                let value = u128::from_le_bytes(
+                    chunk[1..]
+                        .try_into()
+                        .map_err(|e: std::array::TryFromSliceError| Error::msg(e.to_string()))?,
+                );
                 let result = match chunk[0] {
                     0x7F => Val::I32(value as i32),
                     0x7E => Val::I64(value as i64),
                     0x7B => Val::V128(value),
-                    _ => return Err(anyhow!("Unsupported type ID")),
+                    _ => return Err(Error::msg("Unsupported type ID")),
                 };
                 Ok(result)
             })
@@ -435,12 +536,15 @@ where
                     .clone(),
             ),
         };
-        let config: Vec<u8> =
-            rmp_serde::to_vec(config.as_ref()).map_err(|_| anyhow!("Error serializing config"))?;
+        let config: Vec<u8> = rmp_serde::to_vec(config.as_ref())
+            .map_err(|_| Error::msg("Error serializing config"))?;
 
         log::debug!("Spawn on node {node_id}, mod {module_id}, fn {function}, params {params:?}");
 
-        let self_node_id = state.distributed()?.node_id();
+        let self_node_id = state
+            .distributed()
+            .map_err(|e| Error::msg(e.to_string()))?
+            .node_id();
         let spawn_params = SpawnParams {
             env: EnvironmentId(state.environment_id()),
             src: ProcessId(state.id()),
@@ -454,31 +558,37 @@ where
                 config,
             },
         };
-        let node_client = state.distributed()?.node_client.clone();
+        let node_client = state
+            .distributed()
+            .map_err(|e| Error::msg(e.to_string()))?
+            .node_client
+            .clone();
         let spawn_response = node_client
             .spawn(spawn_params)
             .await
+            .map_err(|e| Error::msg(e.to_string()))
             .map(|message_id| node_client.await_response(message_id))?
-            .await?;
+            .await
+            .map_err(|e| Error::msg(e.to_string()))?;
         let (process_or_error_id, ret) = match spawn_response {
             distributed::message::ResponseContent::Spawned(process_id) => Ok((process_id, 0)),
             distributed::message::ResponseContent::Error(error) => {
                 let (code, message): (u32, String) = match error {
-                    ClientError::Unexpected(cause) => Err(anyhow!(cause)),
+                    ClientError::Unexpected(cause) => Err(Error::msg(cause)),
                     ClientError::Connection(cause) => Ok((9027, cause)),
                     ClientError::NodeNotFound => Ok((1, "Node does not exist.".to_string())),
                     ClientError::ModuleNotFound => Ok((2, "Module does not exist.".to_string())),
-                    ClientError::ProcessNotFound => Err(anyhow!("unreachable")),
+                    ClientError::ProcessNotFound => Err(Error::msg("unreachable")),
                 }?;
                 Ok((
                     caller
                         .data_mut()
                         .error_resources_mut()
-                        .add(anyhow!(message)),
+                        .add(anyhow::Error::msg(message)),
                     code,
                 ))
             }
-            _ => Err(anyhow!("unreachable")),
+            _ => Err(Error::msg("unreachable")),
         }?;
 
         memory
@@ -531,7 +641,7 @@ where
         }) = message
         {
             if !resources.is_empty() {
-                return Err(anyhow!("Cannot send resources to remote nodes."));
+                return Err(Error::msg("Cannot send resources to remote nodes."));
             }
 
             let state = caller.data();
@@ -543,12 +653,18 @@ where
                 tag,
                 data: buffer,
             };
-            match state.distributed()?.node_client.send(send_params).await {
+            match state
+                .distributed()
+                .map_err(|e| Error::msg(e.to_string()))?
+                .node_client
+                .send(send_params)
+                .await
+            {
                 Ok(_) => Ok(0),
-                Err(cause) => Err(anyhow!(cause)),
+                Err(cause) => Err(Error::msg(cause.to_string())),
             }
         } else {
-            Err(anyhow!("Only Message::Data can be sent across nodes."))
+            Err(Error::msg("Only Message::Data can be sent across nodes."))
         }
     })
 }
@@ -601,7 +717,7 @@ where
         }) = message
         {
             if !resources.is_empty() {
-                return Err(anyhow!("Cannot send resources to remote nodes."));
+                return Err(Error::msg("Cannot send resources to remote nodes."));
             }
 
             let state = caller.data();
@@ -613,9 +729,15 @@ where
                 tag,
                 data: buffer,
             };
-            let code = match state.distributed()?.node_client.send(send_params).await {
+            let code = match state
+                .distributed()
+                .map_err(|e| Error::msg(e.to_string()))?
+                .node_client
+                .send(send_params)
+                .await
+            {
                 Ok(_) => Ok(0),
-                Err(error) => Err(anyhow!(error)),
+                Err(error) => Err(Error::msg(error.to_string())),
             }?;
 
             if code != 0 {
@@ -637,7 +759,7 @@ where
                 Ok(9027)
             }
         } else {
-            Err(anyhow!("Only Message::Data can be sent across nodes."))
+            Err(Error::msg("Only Message::Data can be sent across nodes."))
         }
     })
 }

@@ -1,18 +1,43 @@
 use std::future::Future;
 
-use anyhow::Result;
 use lunatic_common_api::{get_memory, IntoTrap};
 use lunatic_process::state::ProcessState;
 use lunatic_process_api::ProcessCtx;
+use wasmtime::Result;
 use wasmtime::{Caller, Linker};
 
 // Register the registry APIs to the linker
 pub fn register<T: ProcessState + ProcessCtx<T> + Send + Sync + 'static>(
     linker: &mut Linker<T>,
 ) -> Result<()> {
-    linker.func_wrap4_async("lunatic::registry", "put", put)?;
-    linker.func_wrap4_async("lunatic::registry", "get", get)?;
-    linker.func_wrap2_async("lunatic::registry", "remove", remove)?;
+    linker.func_wrap_async(
+        "lunatic::registry",
+        "put",
+        |caller, (name_str_ptr, name_str_len, node_id, process_id): (u32, u32, u64, u64)| {
+            put(caller, name_str_ptr, name_str_len, node_id, process_id)
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::registry",
+        "get",
+        |caller,
+         (name_str_ptr, name_str_len, node_id_ptr, process_id_ptr): (u32, u32, u32, u32)| {
+            get(
+                caller,
+                name_str_ptr,
+                name_str_len,
+                node_id_ptr,
+                process_id_ptr,
+            )
+        },
+    )?;
+    linker.func_wrap_async(
+        "lunatic::registry",
+        "remove",
+        |caller, (name_str_ptr, name_str_len): (u32, u32)| {
+            remove(caller, name_str_ptr, name_str_len)
+        },
+    )?;
 
     #[cfg(feature = "metrics")]
     metrics::describe_counter!(

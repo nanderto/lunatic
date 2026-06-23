@@ -8,19 +8,18 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use hash_map_id::HashMapId;
 use lunatic_error_api::ErrorCtx;
 use tokio::io::{split, ReadHalf, WriteHalf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
-use anyhow::anyhow;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_rustls::rustls::{Certificate, PrivateKey};
 use tokio_rustls::TlsStream;
 use wasmtime::Memory;
 use wasmtime::{Caller, Linker};
+use wasmtime::{Error, Result};
 
 use lunatic_common_api::IntoTrap;
 
@@ -139,6 +138,6 @@ fn socket_address<T: NetworkingCtx>(
             let addr = <Ipv6Addr as From<[u8; 16]>>::from(ip.try_into().expect("exactly 16 bytes"));
             SocketAddrV6::new(addr, port as u16, flow_info, scope_id).into()
         }
-        _ => return Err(anyhow!("Unsupported address type in socket_address*")),
+        _ => return Err(Error::msg("Unsupported address type in socket_address*")),
     })
 }

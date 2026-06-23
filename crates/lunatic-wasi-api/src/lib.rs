@@ -1,26 +1,29 @@
-use anyhow::Result;
 use lunatic_common_api::{get_memory, IntoTrap};
 use lunatic_process::state::ProcessState;
 use lunatic_stdout_capture::StdoutCapture;
-use wasmtime::{Caller, Linker};
-use wasmtime_wasi::{ambient_authority, Dir, WasiCtx, WasiCtxBuilder};
+use wasi_common::{
+    sync::{ambient_authority, Dir, WasiCtxBuilder},
+    WasiCtx,
+};
+use wasmtime::{Caller, Linker, Result};
 
 /// Create a `WasiCtx` from configuration settings.
 pub fn build_wasi(
     args: Option<&Vec<String>>,
     envs: Option<&Vec<(String, String)>>,
     dirs: &[(String, String)],
-) -> Result<WasiCtx> {
-    let mut wasi = WasiCtxBuilder::new().inherit_stdio();
+) -> anyhow::Result<WasiCtx> {
+    let mut wasi = WasiCtxBuilder::new();
+    wasi.inherit_stdio();
     if let Some(envs) = envs {
-        wasi = wasi.envs(envs)?;
+        wasi.envs(envs)?;
     }
     if let Some(args) = args {
-        wasi = wasi.args(args)?;
+        wasi.args(args)?;
     }
     for (preopen_dir_path, resolved_path) in dirs {
         let preopen_dir = Dir::open_ambient_dir(resolved_path, ambient_authority())?;
-        wasi = wasi.preopened_dir(preopen_dir, preopen_dir_path)?;
+        wasi.preopened_dir(preopen_dir, preopen_dir_path)?;
     }
     Ok(wasi.build())
 }
@@ -47,10 +50,7 @@ where
     T::Config: LunaticWasiConfigCtx,
 {
     // Register all wasi host functions
-    wasmtime_wasi::sync::snapshots::preview_1::add_wasi_snapshot_preview1_to_linker(
-        linker,
-        |ctx| ctx.wasi_mut(),
-    )?;
+    wasi_common::sync::add_to_linker(linker, |ctx| ctx.wasi_mut())?;
 
     // Register host functions to configure wasi
     linker.func_wrap(
@@ -83,7 +83,7 @@ fn add_environment_variable<T>(
     value_len: u32,
 ) -> Result<()>
 where
-    T: ProcessState,
+    T: ProcessState + 'static,
     T::Config: LunaticWasiConfigCtx,
 {
     let memory = get_memory(&mut caller)?;
@@ -124,7 +124,7 @@ fn add_command_line_argument<T>(
     argument_len: u32,
 ) -> Result<()>
 where
-    T: ProcessState,
+    T: ProcessState + 'static,
     T::Config: LunaticWasiConfigCtx,
 {
     let memory = get_memory(&mut caller)?;
@@ -153,7 +153,7 @@ where
 // * If any of the memory slices falls outside the memory.
 fn preopen_dir<T>(mut caller: Caller<T>, config_id: u64, dir_ptr: u32, dir_len: u32) -> Result<()>
 where
-    T: ProcessState,
+    T: ProcessState + 'static,
     T::Config: LunaticWasiConfigCtx,
 {
     let memory = get_memory(&mut caller)?;
