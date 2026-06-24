@@ -21,8 +21,8 @@ Not a committed contract; updated as work lands.
 
 - ✅ **1a–1e** — landed in the dep-bump PR (#3).
 - ✅ **1f** — component-model linker path + `can_use_wasi_preview_2` + smoke test (PR #4).
-- ⏳ **1g** — validation + docs (this PR).
-- ⬜ **2a** — TLS surface reconciliation.
+- ✅ **1g** — validation + docs (PR #5).
+- ✅ **2a** — TLS surface reconciliation: 14 `tls_*` imports asserted (PR #6).
 - ⬜ **2b–2e** — outbound HTTP.
 
 ## Git strategy
