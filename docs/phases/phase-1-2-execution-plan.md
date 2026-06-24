@@ -17,6 +17,14 @@ Not a committed contract; updated as work lands.
 - **Phase 2:** 2a (14 `tls_*` host fns absent from `wat/all_imports.wat`) is independent
   and ready. 2b–2e (outbound HTTP) depend on 1f.
 
+## Progress
+
+- ✅ **1a–1e** — landed in the dep-bump PR (#3).
+- ✅ **1f** — component-model linker path + `can_use_wasi_preview_2` + smoke test (PR #4).
+- ⏳ **1g** — validation + docs (this PR).
+- ⬜ **2a** — TLS surface reconciliation.
+- ⬜ **2b–2e** — outbound HTTP.
+
 ## Git strategy
 
 Stacked branches; each sub-task its own PR so review stays granular. Base of the

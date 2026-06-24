@@ -95,11 +95,19 @@ flowchart LR
       <header>
         <span class="badge">Phase 1</span>
         <h3>Wasmtime modernisation + WASI Preview 2 <a href="phases/phase-1-wasmtime-upgrade.html" style="font-size:12px;font-weight:normal;margin-left:8px;">→ detailed plan</a></h3>
-        <span class="size">~6–10 weeks</span>
+        <span class="size">~6–10 weeks · <span class="tag good">implemented — in review</span></span>
       </header>
       <p>
-        The single biggest unblocker. Today <code>wasmtime</code>, <code>wasi-common</code>, and
-        <code>wiggle</code> are pinned at v8 — multiple years behind upstream. This blocks
+        <strong>Status:</strong> sub-tasks 1a–1f are implemented (stacked PRs in review).
+        <code>wasmtime</code> / <code>wasmtime-wasi</code> / <code>wasi-common</code> are now at
+        <strong>v45</strong>; the workspace builds, the full test suite passes, and the WASI Preview 2
+        component-model linker path is reachable (gated by the <code>can_use_wasi_preview_2</code>
+        config flag, validated by a Preview 2 component smoke test). Outbound <code>wasi-http</code>
+        moves to phase 2, where the component model is the prerequisite it was waiting on.
+      </p>
+      <p>
+        The single biggest unblocker. Previously <code>wasmtime</code>, <code>wasi-common</code>, and
+        <code>wiggle</code> were pinned at v8 — multiple years behind upstream. That blocked
         outbound HTTP, modern TLS, the component model, the pooling allocator, and async-host-function
         ergonomics. Every later phase is easier on a current runtime.
       </p>
