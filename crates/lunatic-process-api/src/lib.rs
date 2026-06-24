@@ -34,6 +34,10 @@ pub trait ProcessConfigCtx {
     fn set_can_create_configs(&mut self, can: bool);
     fn can_spawn_processes(&self) -> bool;
     fn set_can_spawn_processes(&mut self, can: bool);
+    /// Whether this process may be instantiated as a WASI Preview 2 component
+    /// (via the component-model linker path) rather than a Preview 1 module.
+    fn can_use_wasi_preview_2(&self) -> bool;
+    fn set_can_use_wasi_preview_2(&mut self, can: bool);
     fn can_access_fs_location(&self, path: &Path) -> Result<(), String>;
 }
 

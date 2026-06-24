@@ -1,0 +1,24 @@
+# WASI Preview 2 smoke-test guest (phase 1f).
+#
+# Compiled out-of-band to a component; NOT part of the host workspace.
+# Rebuild the committed fixture with:
+#
+#   cargo build --release --target wasm32-wasip2 \
+#       --manifest-path tests/preview2-smoke-guest/Cargo.toml
+#   cp tests/preview2-smoke-guest/target/wasm32-wasip2/release/preview2_smoke_guest.wasm \
+#       tests/fixtures/preview2_smoke.wasm
+#
+# The wasm32-wasip2 target emits a component directly (no cargo-component needed).
+[package]
+name = "preview2-smoke-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "preview2_smoke_guest"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+strip = true

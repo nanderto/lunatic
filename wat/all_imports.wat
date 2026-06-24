@@ -1,4 +1,10 @@
 ;; This file is used for testing import signatures.
+;;
+;; Scope: this asserts the WASI **Preview 1** / classic-module host surface that
+;; guests import by name (the `lunatic::*` and `wasi_snapshot_preview1` namespaces).
+;; The WASI **Preview 2** surface added in phase 1f is component-model native — it
+;; is wired on a `component::Linker` via `wasmtime_wasi::p2` and validated by the
+;; `tests/preview2_smoke.rs` reachability test, not by import-name assertion here.
 
 (module
     (import "lunatic::error" "string_size" (func (param i64) (result i32)))

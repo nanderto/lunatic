@@ -1,4 +1,6 @@
 /target
+# Out-of-band wasm guest build output (the prebuilt fixture itself is committed)
+tests/preview2-smoke-guest/target
 .DS_Store
 .vscode
 .idea

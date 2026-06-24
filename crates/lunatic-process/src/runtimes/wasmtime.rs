@@ -164,7 +164,144 @@ pub fn default_config() -> wasmtime::Config {
         .cranelift_opt_level(wasmtime::OptLevel::SpeedAndSize)
         // Allocate resources on demand because we can't predict how many process will exist
         .allocation_strategy(wasmtime::InstanceAllocationStrategy::OnDemand)
+        // Enable the component model so WASI Preview 2 component guests can be
+        // instantiated through the component linker path (phase 1f). Harmless for
+        // classic module guests, which ignore it.
+        .wasm_component_model(true)
         // Disable memory relocation (equivalent to static_memory_forced in older wasmtime)
         .memory_may_move(false);
     config
+}
+
+// ---------------------------------------------------------------------------
+// WASI Preview 2 / component-model path (phase 1f)
+//
+// This is strictly additive: the classic `Module` + `Linker` path above is
+// unchanged. Component guests take this parallel path, which wires the WASI
+// Preview 2 host surface onto a `component::Linker` via `wasmtime_wasi::p2`.
+// The store state `T` must expose its `WasiCtx`/`ResourceTable` by implementing
+// `wasmtime_wasi::WasiView`.
+// ---------------------------------------------------------------------------
+
+use wasmtime::component::{
+    Component, InstancePre as ComponentInstancePre, Linker as ComponentLinker,
+};
+use wasmtime_wasi::WasiView;
+
+impl WasmtimeRuntime {
+    /// Compile a WASI Preview 2 component and pre-instantiate it against a
+    /// component linker carrying the Preview 2 host surface.
+    pub fn compile_component<T>(&self, data: RawWasm) -> Result<WasmtimeCompiledComponent<T>>
+    where
+        T: WasiView + 'static,
+    {
+        let component = Component::new(&self.engine, data.as_slice())?;
+        let mut linker: ComponentLinker<T> = ComponentLinker::new(&self.engine);
+        // Register the WASI Preview 2 host functions on the component linker.
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        let instance_pre = linker.instantiate_pre(&component)?;
+        Ok(WasmtimeCompiledComponent::new(
+            data,
+            component,
+            instance_pre,
+        ))
+    }
+
+    /// Instantiate a previously compiled component into a fresh store.
+    ///
+    /// The component path is intentionally decoupled from `ProcessState` /
+    /// `ResourceLimiter`: the WASI Preview 2 `WasiCtx` is not `Sync`, so it
+    /// cannot live inside `DefaultProcessState` (which must be `Sync`). Any
+    /// `WasiView` store state can be instantiated here.
+    pub async fn instantiate_component<T>(
+        &self,
+        compiled_component: &WasmtimeCompiledComponent<T>,
+        state: T,
+    ) -> Result<WasmtimeComponentInstance<T>>
+    where
+        T: WasiView + 'static,
+    {
+        let mut store = wasmtime::Store::new(&self.engine, state);
+        // The engine has `consume_fuel` enabled; give the component a full tank
+        // and yield periodically so it cannot starve the scheduler.
+        store.set_fuel(u64::MAX)?;
+        store.fuel_async_yield_interval(Some(UNIT_OF_COMPUTE_IN_INSTRUCTIONS))?;
+        let instance = compiled_component
+            .instantiator()
+            .instantiate_async(&mut store)
+            .await?;
+        Ok(WasmtimeComponentInstance { store, instance })
+    }
+}
+
+pub struct WasmtimeCompiledComponent<T: 'static> {
+    inner: Arc<WasmtimeCompiledComponentInner<T>>,
+}
+
+struct WasmtimeCompiledComponentInner<T: 'static> {
+    source: RawWasm,
+    component: Component,
+    instance_pre: ComponentInstancePre<T>,
+}
+
+impl<T: 'static> WasmtimeCompiledComponent<T> {
+    fn new(
+        source: RawWasm,
+        component: Component,
+        instance_pre: ComponentInstancePre<T>,
+    ) -> WasmtimeCompiledComponent<T> {
+        let inner = Arc::new(WasmtimeCompiledComponentInner {
+            source,
+            component,
+            instance_pre,
+        });
+        Self { inner }
+    }
+
+    pub fn source(&self) -> &RawWasm {
+        &self.inner.source
+    }
+
+    pub fn component(&self) -> &Component {
+        &self.inner.component
+    }
+
+    pub fn instantiator(&self) -> &ComponentInstancePre<T> {
+        &self.inner.instance_pre
+    }
+}
+
+impl<T: 'static> Clone for WasmtimeCompiledComponent<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+pub struct WasmtimeComponentInstance<T>
+where
+    T: Send + 'static,
+{
+    store: wasmtime::Store<T>,
+    instance: wasmtime::component::Instance,
+}
+
+impl<T> WasmtimeComponentInstance<T>
+where
+    T: Send + 'static,
+{
+    /// Access the underlying component instance and store, e.g. to look up and
+    /// call a typed export. Used by the Preview 2 smoke test to prove the path
+    /// is reachable.
+    pub fn store_and_instance(
+        &mut self,
+    ) -> (&mut wasmtime::Store<T>, &wasmtime::component::Instance) {
+        (&mut self.store, &self.instance)
+    }
+
+    /// Consume the instance and return the inner store state.
+    pub fn into_data(self) -> T {
+        self.store.into_data()
+    }
 }
