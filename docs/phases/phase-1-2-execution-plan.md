@@ -23,7 +23,8 @@ Not a committed contract; updated as work lands.
 - ✅ **1f** — component-model linker path + `can_use_wasi_preview_2` + smoke test (PR #4).
 - ✅ **1g** — validation + docs (PR #5).
 - ✅ **2a** — TLS surface reconciliation: 14 `tls_*` imports asserted (PR #6).
-- ⬜ **2b–2e** — outbound HTTP.
+- ✅ **2b–2e** — outbound HTTP via `wasmtime-wasi-http`, `can_outbound_http` gate,
+  end-to-end GET + deny tests (PR #7). Per-origin allow-list carried forward.
 
 ## Git strategy
 

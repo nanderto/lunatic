@@ -38,6 +38,11 @@ pub trait ProcessConfigCtx {
     /// (via the component-model linker path) rather than a Preview 1 module.
     fn can_use_wasi_preview_2(&self) -> bool;
     fn set_can_use_wasi_preview_2(&mut self, can: bool);
+    /// Whether this process (as a component) may make outbound `wasi:http`
+    /// requests. When false the host leaves the `wasi:http` imports unwired, so
+    /// a component needing them cannot be instantiated.
+    fn can_outbound_http(&self) -> bool;
+    fn set_can_outbound_http(&mut self, can: bool);
     fn can_access_fs_location(&self, path: &Path) -> Result<(), String>;
 }
 

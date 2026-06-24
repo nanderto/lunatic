@@ -1,6 +1,7 @@
 /target
-# Out-of-band wasm guest build output (the prebuilt fixture itself is committed)
+# Out-of-band wasm guest build output (the prebuilt fixtures themselves are committed)
 tests/preview2-smoke-guest/target
+tests/outbound-http-guest/target
 .DS_Store
 .vscode
 .idea

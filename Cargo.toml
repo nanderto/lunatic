@@ -80,8 +80,9 @@ zip = "0.6.6"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["async_tokio"] }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "io-util", "net", "macros"] }
 wat = "1.0"
+wasmtime-wasi-http = { workspace = true }
 
 [[bench]]
 harness = false
@@ -112,6 +113,7 @@ members = [
 # host workspace). The prebuilt artifacts are committed under tests/fixtures/.
 exclude = [
     "tests/preview2-smoke-guest",
+    "tests/outbound-http-guest",
 ]
 
 [workspace.dependencies]
@@ -150,6 +152,7 @@ uuid = { version = "1.1", features = ["v4"] }
 wasi-common = "45"
 wasmtime = "45"
 wasmtime-wasi = "45"
+wasmtime-wasi-http = "45"
 wiggle = "45"
 
 [workspace.metadata.git-cliff.changelog]

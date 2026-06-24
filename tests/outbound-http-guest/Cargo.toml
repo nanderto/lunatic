@@ -1,0 +1,25 @@
+# Outbound-HTTP smoke-test guest (phase 2e).
+#
+# Compiled out-of-band to a component; NOT part of the host workspace.
+# Rebuild the committed fixture with:
+#
+#   cargo build --release --target wasm32-wasip2 \
+#       --manifest-path tests/outbound-http-guest/Cargo.toml
+#   cp tests/outbound-http-guest/target/wasm32-wasip2/release/outbound_http_guest.wasm \
+#       tests/fixtures/outbound_http.wasm
+[package]
+name = "outbound-http-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "outbound_http_guest"
+path = "src/main.rs"
+
+[dependencies]
+wasi = "0.14"
+
+[profile.release]
+opt-level = "s"
+strip = true

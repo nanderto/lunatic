@@ -187,6 +187,7 @@ use wasmtime::component::{
     Component, InstancePre as ComponentInstancePre, Linker as ComponentLinker,
 };
 use wasmtime_wasi::WasiView;
+use wasmtime_wasi_http::p2::WasiHttpView;
 
 impl WasmtimeRuntime {
     /// Compile a WASI Preview 2 component and pre-instantiate it against a
@@ -199,6 +200,33 @@ impl WasmtimeRuntime {
         let mut linker: ComponentLinker<T> = ComponentLinker::new(&self.engine);
         // Register the WASI Preview 2 host functions on the component linker.
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        let instance_pre = linker.instantiate_pre(&component)?;
+        Ok(WasmtimeCompiledComponent::new(
+            data,
+            component,
+            instance_pre,
+        ))
+    }
+
+    /// Compile a component with the WASI Preview 2 surface **plus** outbound
+    /// `wasi:http` (phase 2c). Use this only for processes whose config grants
+    /// outbound HTTP (`can_outbound_http`); the plain [`compile_component`]
+    /// leaves the `wasi:http` imports unsatisfied, so a component that needs
+    /// them fails to instantiate — that unsatisfied-import failure is the deny
+    /// path for processes without the permission.
+    pub fn compile_component_with_http<T>(
+        &self,
+        data: RawWasm,
+    ) -> Result<WasmtimeCompiledComponent<T>>
+    where
+        T: WasiView + WasiHttpView + 'static,
+    {
+        let component = Component::new(&self.engine, data.as_slice())?;
+        let mut linker: ComponentLinker<T> = ComponentLinker::new(&self.engine);
+        // Preview 2 first (provides wasi:io / clocks that wasi:http builds on),
+        // then the outbound HTTP interfaces.
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         let instance_pre = linker.instantiate_pre(&component)?;
         Ok(WasmtimeCompiledComponent::new(
             data,

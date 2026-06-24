@@ -24,6 +24,9 @@ pub struct DefaultProcessConfig {
     // Can this process be instantiated as a WASI Preview 2 component
     #[serde(default)]
     can_use_wasi_preview_2: bool,
+    // Can this process (as a component) make outbound wasi:http requests
+    #[serde(default)]
+    can_outbound_http: bool,
     // WASI configs
     preopened_dirs: Vec<(String, String)>,
     command_line_arguments: Vec<String>,
@@ -145,6 +148,14 @@ impl ProcessConfigCtx for DefaultProcessConfig {
 
     fn set_can_use_wasi_preview_2(&mut self, can: bool) {
         self.can_use_wasi_preview_2 = can
+    }
+
+    fn can_outbound_http(&self) -> bool {
+        self.can_outbound_http
+    }
+
+    fn set_can_outbound_http(&mut self, can: bool) {
+        self.can_outbound_http = can
     }
 
     fn can_access_fs_location(&self, path: &std::path::Path) -> Result<(), String> {
@@ -307,6 +318,7 @@ impl Default for DefaultProcessConfig {
             can_create_configs: false,
             can_spawn_processes: false,
             can_use_wasi_preview_2: false,
+            can_outbound_http: false,
             preopened_dirs: vec![],
             command_line_arguments: vec![],
             environment_variables: vec![],

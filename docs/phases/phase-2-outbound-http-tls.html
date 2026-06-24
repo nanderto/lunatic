@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Phase 2 — Outbound HTTP and TLS (sketch)</title>
+<link rel="stylesheet" href="../styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: true, theme: 'dark',
+  themeVariables: { background: '#161922', primaryColor: '#1c2030', primaryBorderColor: '#2a3045',
+    primaryTextColor: '#e6e8ee', lineColor: '#7c9cff', secondaryColor: '#11141c',
+    fontFamily: 'ui-monospace, Consolas, monospace' }
+});
+</script>
+</head>
+<body>
+<div class="layout">
+  <aside class="nav">
+    <div class="brand">Lunatic Platform</div>
+    <div class="tagline">Planning &amp; architecture docs</div>
+    <h4>Overview</h4>
+    <a href="../index.html">Platform vision</a>
+    <h4>Build paths</h4>
+    <a href="../substrate-apps.html">Apps on the substrate</a>
+    <a href="../orleans-framework.html">Apps via a framework</a>
+    <h4>Roadmap</h4>
+    <a href="../erlang-substrate.html">Substrate roadmap</a>
+    <h4>Phase plans</h4>
+    <a href="phase-1-wasmtime-upgrade.html">1 · Wasmtime upgrade</a>
+    <a href="phase-2-outbound-http-tls.html" class="active">2 · Outbound HTTP / TLS</a>
+    <a href="phase-3-monitors-membership.html">3 · Monitors + membership</a>
+    <a href="phase-4-process-groups.html">4 · Process groups</a>
+    <a href="phase-5-supervision-crate.html">5 · Supervision crate</a>
+    <h4>Reference</h4>
+    <a href="../../CLAUDE.md">CLAUDE.md</a>
+  </aside>
+
+  <main>
+    <h1>
+      <span class="eyebrow">Phase 2 · Sketch</span>
+      Outbound HTTP and TLS
+    </h1>
+    <p class="lede">
+      Expose <code>wasi-http</code> outbound as a host capability and align the existing TLS surface
+      so guests have a complete client-side networking story for HTTPS, databases, and telemetry.
+      Detailed sub-tasks are intentionally deferred: the wasi-http wiring depends on the WASI Preview
+      2 surface that phase 1 (sub-task 1f) actually ships, and the concrete shape of that surface
+      determines what work this phase still needs.
+    </p>
+
+    <div class="callout warn">
+      <strong>This is a sketch, not a detailed plan.</strong> The detailed sub-task breakdown is
+      written after phase 1f lands. Concrete wasi-http wiring, the choice between using the
+      <code>wasmtime-wasi-http</code> crate directly versus building a custom outbound HTTP host
+      capability, and the rustls version aligned with the modernised wasmtime stack are all open
+      until then.
+    </div>
+
+    <div class="callout">
+      <strong>Status — implemented, in review.</strong> With phase 1f's component-model path in place,
+      Phase 2 has landed as two stacked PRs:
+      <ul>
+        <li><strong>2a</strong> — the 14 existing <code>tls_*</code> host functions are now asserted in
+          <code>wat/all_imports.wat</code>.</li>
+        <li><strong>2b–2e</strong> — outbound HTTP adopts <code>wasmtime-wasi-http</code> (decision 2b).
+          <code>WasmtimeRuntime::compile_component_with_http</code> wires
+          <code>wasi:http/outgoing-handler</code> onto the component linker (2c); a
+          <code>can_outbound_http</code> per-process flag gates it (2d) — when off, the plain
+          <code>compile_component</code> leaves the <code>wasi:http</code> imports unsatisfied so the
+          component cannot instantiate (the deny path). An integration test drives a real component
+          guest issuing a <code>GET</code> against a local server, plus a deny test (2e).</li>
+      </ul>
+      <strong>Carried forward:</strong> the finer-grained <em>per-origin</em> allow-list (part of 2d) is
+      a follow-up — the hook exists (<code>WasiHttpHooks::send_request</code>) but only the coarse
+      per-process on/off gate is wired so far. Inbound HTTP remains out of scope (framework concern).
+      HTTPS works in production via the host TLS stack; the test uses plain HTTP to a local server to
+      avoid trusting a throwaway cert.
+    </div>
+
+    <h2>Survey of the current surface</h2>
+    <table>
+      <thead><tr><th>Area</th><th>Current state</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Guest TLS host functions</td>
+          <td>
+            <code>crates/lunatic-networking-api/src/tls_tcp.rs</code> already exposes
+            <code>tls_bind</code>, <code>tls_accept</code>, <code>tls_connect</code>,
+            <code>tls_read</code>, <code>tls_write_vectored</code>, plus timeout and lifecycle
+            functions. Built on <code>tokio-rustls</code>.
+          </td>
+        </tr>
+        <tr>
+          <td>Import-surface assertion</td>
+          <td>
+            The <code>tls_*</code> host functions do <strong>not</strong> currently appear in
+            <code>wat/all_imports.wat</code>. The surface exists in code but is not part of the
+            asserted contract — a discrepancy to reconcile.
+          </td>
+        </tr>
+        <tr>
+          <td>Control-plane mTLS</td>
+          <td>
+            Recent work (commit <code>5eb9570</code>) fixed the control-plane mTLS root cert store.
+            Distinct from guest-facing TLS; reuses rustls.
+          </td>
+        </tr>
+        <tr>
+          <td>Outbound HTTP</td>
+          <td>Not present. No <code>wasi-http</code>, no bespoke HTTP client host capability.</td>
+        </tr>
+        <tr>
+          <td>rustls version</td>
+          <td>
+            Pinned via <code>tokio-rustls</code> in <code>lunatic-networking-api/Cargo.toml</code>.
+            Likely needs alignment with whatever rustls version current <code>wasmtime-wasi-http</code>
+            wants — phase 1 may force a bump.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Likely scope</h2>
+    <p>Best-guess sub-tasks, to be refined after phase 1f:</p>
+    <ul>
+      <li>
+        <strong>2a · Reconcile existing TLS surface.</strong> Add the <code>tls_*</code> host
+        functions to <code>wat/all_imports.wat</code>; verify the assertion test passes. Pure
+        documentation/audit work, can land independently of the rest of the phase.
+      </li>
+      <li>
+        <strong>2b · Decide outbound HTTP architecture.</strong> Three options, decision deferred:
+        adopt <code>wasmtime-wasi-http</code> wholesale; build a thin custom host capability with
+        rustls + hyper; expose only socket-level capabilities and let guests link an HTTP client.
+        Default lean: <code>wasmtime-wasi-http</code> once Preview 2 is reachable from phase 1f.
+      </li>
+      <li>
+        <strong>2c · Implement chosen path.</strong> Wire the host capability, gate by per-process
+        allow-list for hosts (analogous to existing fs preopen scoping), expose the imports to guests.
+      </li>
+      <li>
+        <strong>2d · Permission model.</strong> Add config flags so a process can be denied outbound
+        HTTP or restricted to specific origins. Mirrors the existing <code>can_*</code> flags pattern
+        in <code>DefaultProcessConfig</code>.
+      </li>
+      <li>
+        <strong>2e · Validation.</strong> Integration test: a guest makes an HTTPS request to a local
+        test server and reads the response. Deny-list test: a guest denied outbound HTTP traps on
+        attempted call. <code>wat/all_imports.wat</code> updated; gap table on
+        <code>docs/index.html</code> updated.
+      </li>
+    </ul>
+
+    <h2>Open questions to resolve after phase 1f</h2>
+    <ul>
+      <li>
+        <strong>Component model vs module.</strong> <code>wasmtime-wasi-http</code> is component-model
+        native. Do we expose this surface only to component-form guests, or build a module-form
+        shim? The answer depends on what 1f wires up.
+      </li>
+      <li>
+        <strong>Streaming bodies.</strong> Large request/response bodies stream rather than buffer.
+        Decide whether the guest API surfaces streams (matches WASI Preview 2 design) or buffers
+        (simpler, but problematic for large bodies).
+      </li>
+      <li>
+        <strong>rustls server certs.</strong> Existing <code>tls_accept</code> takes a server config;
+        the format is in the host. Confirm post-phase-1 the same path still works or needs an
+        update.
+      </li>
+      <li>
+        <strong>HTTP server (inbound).</strong> Out of scope for this phase. Inbound HTTP belongs to
+        a future Phoenix-style framework, not the substrate. Document this boundary.
+      </li>
+    </ul>
+
+    <h2>Dependencies</h2>
+    <ul>
+      <li>Phase 1 must complete through at least sub-task 1f (WASI Preview 2 alongside Preview 1).</li>
+      <li>No dependency on phases 3, 4, or 5.</li>
+    </ul>
+
+    <h2>Definition of done for phase 2</h2>
+    <p>
+      A guest can make an outbound HTTPS request from a Lunatic process, gated by per-process
+      permissions. The TLS surface that already exists in the codebase is asserted in
+      <code>wat/all_imports.wat</code>. Detailed sub-task definitions of done will be added when the
+      sketch above is upgraded to a full plan.
+    </p>
+
+    <footer>
+      Documents in this folder: <a href="../index.html">Platform vision</a> ·
+      <a href="../substrate-apps.html">Apps on the substrate</a> ·
+      <a href="../orleans-framework.html">Apps via a framework</a> ·
+      <a href="../erlang-substrate.html">Substrate roadmap</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
