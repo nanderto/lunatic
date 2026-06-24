@@ -21,6 +21,9 @@ pub struct DefaultProcessConfig {
     can_create_configs: bool,
     // Can this process spawn sub-processes
     can_spawn_processes: bool,
+    // Can this process be instantiated as a WASI Preview 2 component
+    #[serde(default)]
+    can_use_wasi_preview_2: bool,
     // WASI configs
     preopened_dirs: Vec<(String, String)>,
     command_line_arguments: Vec<String>,
@@ -134,6 +137,14 @@ impl ProcessConfigCtx for DefaultProcessConfig {
 
     fn set_can_spawn_processes(&mut self, can: bool) {
         self.can_spawn_processes = can
+    }
+
+    fn can_use_wasi_preview_2(&self) -> bool {
+        self.can_use_wasi_preview_2
+    }
+
+    fn set_can_use_wasi_preview_2(&mut self, can: bool) {
+        self.can_use_wasi_preview_2 = can
     }
 
     fn can_access_fs_location(&self, path: &std::path::Path) -> Result<(), String> {
@@ -295,6 +306,7 @@ impl Default for DefaultProcessConfig {
             can_compile_modules: false,
             can_create_configs: false,
             can_spawn_processes: false,
+            can_use_wasi_preview_2: false,
             preopened_dirs: vec![],
             command_line_arguments: vec![],
             environment_variables: vec![],

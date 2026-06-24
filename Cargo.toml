@@ -58,6 +58,7 @@ anyhow = { workspace = true }
 async-ctrlc = "1.2.0"
 clap = { version = "4.0", features = ["cargo", "derive"] }
 dashmap = { workspace = true }
+wasmtime-wasi = { workspace = true }
 dirs = "4.0.0"
 dotenvy = "0.15.7"
 env_logger = "0.9"
@@ -106,6 +107,11 @@ members = [
     "crates/lunatic-wasi-api",
     "crates/lunatic-trap-api",
     "crates/lunatic-sqlite-api",
+]
+# Guest crates compiled to wasm out-of-band (their build target differs from the
+# host workspace). The prebuilt artifacts are committed under tests/fixtures/.
+exclude = [
+    "tests/preview2-smoke-guest",
 ]
 
 [workspace.dependencies]
