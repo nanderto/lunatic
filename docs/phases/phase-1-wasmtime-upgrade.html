@@ -58,6 +58,19 @@ mermaid.initialize({
       real use of Preview 2 (outbound HTTP, sockets) lands in phase 2.
     </p>
 
+    <div class="callout">
+      <strong>Status — implemented, in review.</strong> Sub-tasks 1a–1g are done as a stack of PRs.
+      The landing target was <strong>wasmtime v45</strong> (not the ~v27 estimated when this plan was
+      written). 1a–1e (dependency bump, fuel/Store API, <code>ResourceLimiter</code>, the per-crate
+      <code>func_wrap</code> audit, and the Preview 1 port onto <code>wasi-common</code>) shipped in the
+      dependency-bump PR; the whole workspace builds, tests, and clippy pass. 1f added the WASI Preview 2
+      component-model linker path (<code>WasmtimeRuntime::compile_component</code> /
+      <code>instantiate_component</code> wiring <code>wasmtime_wasi::p2</code>), gated by the
+      <code>can_use_wasi_preview_2</code> flag and validated by <code>tests/preview2_smoke.rs</code>. The
+      one revised decision: outbound <code>wasi-http</code> is deferred to phase 2 (its natural home),
+      per the decision point in 1f below.
+    </div>
+
     <h2>Goal</h2>
     <p>
       Modernise the wasmtime stack so subsequent phases can rely on current APIs (component model,
