@@ -63,6 +63,23 @@
     (import "lunatic::networking" "tcp_peer_addr" (func (param i64 i32) (result i32)))
     (import "lunatic::networking" "udp_peer_addr" (func (param i64 i32) (result i32)))
 
+    ;; TLS host functions (rustls-backed). Asserted here as of phase 2a; the
+    ;; surface existed in lunatic-networking-api but was previously unasserted.
+    (import "lunatic::networking" "tls_bind" (func (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+    (import "lunatic::networking" "drop_tls_listener" (func (param i64)))
+    (import "lunatic::networking" "tls_local_addr" (func (param i64 i32) (result i32)))
+    (import "lunatic::networking" "tls_accept" (func (param i64 i32 i32) (result i32)))
+    (import "lunatic::networking" "tls_connect" (func (param i32 i32 i32 i64 i32 i32 i32) (result i32)))
+    (import "lunatic::networking" "drop_tls_stream" (func (param i64)))
+    (import "lunatic::networking" "clone_tls_stream" (func (param i64) (result i64)))
+    (import "lunatic::networking" "tls_write_vectored" (func (param i64 i32 i32 i32) (result i32)))
+    (import "lunatic::networking" "tls_read" (func (param i64 i32 i32 i32) (result i32)))
+    (import "lunatic::networking" "set_tls_read_timeout" (func (param i64 i64)))
+    (import "lunatic::networking" "set_tls_write_timeout" (func (param i64 i64)))
+    (import "lunatic::networking" "get_tls_read_timeout" (func (param i64) (result i64)))
+    (import "lunatic::networking" "get_tls_write_timeout" (func (param i64) (result i64)))
+    (import "lunatic::networking" "tls_flush" (func (param i64 i32) (result i32)))
+
     (import "lunatic::sqlite" "open" (func (param i32 i32 i32) (result i64)))
     (import "lunatic::sqlite" "execute" (func (param i64 i32 i32) (result i32)))
     (import "lunatic::sqlite" "bind_value" (func (param i64 i32 i32)))
